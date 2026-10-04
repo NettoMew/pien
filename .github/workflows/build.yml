@@ -30,6 +30,9 @@ jobs:
           key: cache-${{ hashFiles('image/kernel/**', 'image/image.config.ts') }}
           restore-keys: cache-
 
+      # The network relay (relay/, Rust): a smoltcp guest end to end through it.
+      - run: cargo test --manifest-path relay/Cargo.toml
+
       # The WARP client (warp/, Rust) is a wasm module the page imports.
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test --manifest-path warp/Cargo.toml
