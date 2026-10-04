@@ -767,3 +767,66 @@ async fn ping_goes_out() {
         .await;
     assert_eq!(reply, Some((SERVICES, 9, 3, b"out there".to_vec())));
 }
+
+/// An echo request as the guest's IP stack would send it, with this TTL.
+fn echo_frame(to: Ipv4Addr, ttl: u8, ident: u16, seq_no: u16) -> Vec<u8> {
+    let request = Icmpv4Repr::EchoRequest { ident, seq_no, data: b"probe" };
+    let ip = Ipv4Repr {
+        src_addr: Ipv4Addr::new(10, 0, 2, 15),
+        dst_addr: to,
+        next_header: IpProtocol::Icmp,
+        payload_len: request.buffer_len(),
+        hop_limit: ttl,
+    };
+    let ethernet = EthernetRepr { src_addr: GUEST_MAC, dst_addr: relay::session::GATEWAY_MAC, ethertype: EthernetProtocol::Ipv4 };
+    let mut frame = vec![0; 14 + ip.buffer_len() + request.buffer_len()];
+    ethernet.emit(&mut EthernetFrame::new_unchecked(&mut frame[..]));
+    ip.emit(&mut Ipv4Packet::new_unchecked(&mut frame[14..]), &ChecksumCapabilities::default());
+    request.emit(&mut Icmpv4Packet::new_unchecked(&mut frame[34..]), &ChecksumCapabilities::default());
+    frame
+}
+
+/// Who answered with "time exceeded" about our echo (ident, seq_no).
+fn time_exceeded(guest: &Guest, ident: u16, seq_no: u16) -> Option<Ipv4Addr> {
+    guest.seen.iter().find_map(|f| {
+        let ip = Ipv4Packet::new_checked(&f[14..]).ok()?;
+        let icmp = Icmpv4Packet::new_checked(ip.payload()).ok()?;
+        (ip.next_header() == IpProtocol::Icmp && u8::from(icmp.msg_type()) == 11).then_some(())?;
+        // The quote: the original IP header (20 bytes), then the echo's first 8.
+        let echo = icmp.data().get(20..28)?;
+        (echo[0] == 8 && echo[4..6] == ident.to_be_bytes() && echo[6..8] == seq_no.to_be_bytes()).then(|| ip.src_addr())
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_last_hop_ends_at_the_gateway() {
+    let relay = relay().await;
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let handle = guest.tcp((Ipv4Addr::new(10, 0, 2, 2), 1)); // learn the gateway's MAC first
+    guest.until(Duration::from_secs(5), |g| (g.socket(handle).state() == tcp::State::Closed).then_some(())).await;
+
+    guest.to_relay.send(echo_frame(SERVICES, 1, 21, 1)).unwrap();
+    let from = guest.until(Duration::from_secs(5), |g| time_exceeded(g, 21, 1)).await;
+    assert_eq!(from, Some(Ipv4Addr::new(10, 0, 2, 2)), "hop 1 is the gateway");
+}
+
+/// Hop 2 is the first router out there: Linux, with a network to cross.
+/// cargo test -- --ignored the_next_hop_is_out_there
+#[cfg(target_os = "linux")]
+#[ignore = "needs a route to 1.1.1.1"]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_next_hop_is_out_there() {
+    let relay = relay().await;
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let handle = guest.tcp((Ipv4Addr::new(10, 0, 2, 2), 1));
+    guest.until(Duration::from_secs(5), |g| (g.socket(handle).state() == tcp::State::Closed).then_some(())).await;
+
+    let mut hops = Vec::new();
+    for ttl in 2..=4 {
+        guest.to_relay.send(echo_frame(Ipv4Addr::new(1, 1, 1, 1), ttl, 22, u16::from(ttl))).unwrap();
+        let hop = guest.until(Duration::from_secs(3), |g| time_exceeded(g, 22, u16::from(ttl))).await;
+        hops.push(hop);
+    }
+    println!("hops 2..=4: {hops:?}");
+    assert!(hops[0].is_some(), "the first router out there said so");
+}

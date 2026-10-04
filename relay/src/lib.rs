@@ -21,6 +21,7 @@ mod dns;
 mod egress;
 pub mod packet;
 mod policy;
+mod reports;
 pub mod server;
 pub mod session;
 

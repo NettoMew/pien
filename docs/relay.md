@@ -21,6 +21,7 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
 | TCP | smoltcp 扮演网关一端。**先真的连上目标，再回访客的 SYN**：对方拒绝就回 RST（curl 报 Connection refused），连不上就回 ICMP 主机不可达，和真实网络一样 |
 | UDP | 绕过 smoltcp：每个（访客端口，目的地）一个真实的 UDP socket，闲置 60 秒回收；对方端口关着时，访客收到 ICMP「端口不可达」 |
 | ICMP | ping 走 Linux 的非特权 ping socket（`ping_group_range`；容器里默认对所有组开放）；回给访客的 echo reply 由中继构造 |
+| TTL（traceroute、mtr） | 中继按路由器的规矩处理访客的 TTL：TTL 用尽的包由网关回「超时」（第 1 跳）；其余按剩下的 TTL 发到真实网络，沿途路由器回的「超时」「不可达」经 Linux 的 `IP_RECVERR` 错误队列收下，原样转给访客，引用访客自己的原始包，所以 mtr 和 traceroute 认得出自己的探测。ping 和 UDP 两种探测都支持 |
 | DNS | 发往 10.0.2.3:53 的查询由中继解析；上游默认走 DoT（Cloudflare），也可以配 Quad9、Google、系统解析或某个地址；可以配静态 hosts |
 | 策略 | 默认只放行公网：私网、回环、链路本地、CGNAT、文档段、组播、保留地址都拦下（回 ICMP「主机被禁止」）。检查的是**真正要连的地址**，所以 DNS 指向内网也没用。端口白名单、黑名单（默认拦 25）、别名（把某个访客地址映射到真实地址，不受检查） |
 | 出口 | TCP 直连，或者经 SOCKS5（比如本机的 Mayami）：代理说拒绝，访客照样收到 RST；UDP 和 ICMP 直连 |
@@ -105,7 +106,7 @@ idle = 1800                     # 秒
 - `cargo test --manifest-path relay/Cargo.toml`（CI 在跑）：
   - 单元测试：报文构造、加密通道（错误密钥、重放、乱序）、配置、策略；
   - 端到端（11 项）：smoltcp 扮演一台有以太网和 ARP 的访客，经真实的 WebSocket 和加密通道连进进程内的中继，再经别名访问本机的测试服务：TCP 双向和半关闭、被拒（SYN-SENT 时就收到 RST）、被策略拦下（ICMP）、UDP、UDP 端口不可达、DNS、ping 网关、错误密钥被拒、经 SOCKS5 出口（连通和被拒）、限速、额度、闲置；
-  - Linux 上多一项 `ping_goes_out`：经 ping socket 真的发出 ICMP。在 v2in0 的容器里 21 项全部通过。
+  - Linux 上多一项 `ping_goes_out`：经 ping socket 真的发出 ICMP；另有一项需要外网、默认跳过的 `the_next_hop_is_out_there`（`--ignored`）：TTL 2 到 4 的 ping 从真实路由器收到「超时」。在 v2in0 的容器里全部通过（第 2 跳是 Docker 网桥，第 3 跳是上游路由器）。
 
 ## 本地开发
 

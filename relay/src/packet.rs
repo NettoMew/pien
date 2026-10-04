@@ -81,15 +81,40 @@ pub fn tcp_reset(syn: &[u8]) -> Option<Vec<u8>> {
     }))
 }
 
-/// The gateway (`from`) telling the guest that `original` will not get through.
+/// `from` telling the guest that `original` will not get through.
 pub fn unreachable(from: Ipv4Addr, original: &[u8], reason: Icmpv4DstUnreachable) -> Option<Vec<u8>> {
-    let ip = Ipv4Packet::new_checked(original).ok()?;
-    let header = Ipv4Repr::parse(&ip, &ChecksumCapabilities::ignored()).ok()?;
-    let data = &ip.payload()[..ip.payload().len().min(8)];
-    let repr = Icmpv4Repr::DstUnreachable { reason, header, data };
-    Some(ipv4(from, ip.src_addr(), IpProtocol::Icmp, repr.buffer_len(), |buf| {
-        repr.emit(&mut Icmpv4Packet::new_unchecked(buf), &checksums())
-    }))
+    icmp_error(from, 3, u8::from(reason), &quote(original)?)
+}
+
+pub const TIME_EXCEEDED: u8 = 11;
+
+/// An ICMP error from `from` — "time exceeded" (11), "unreachable" (3) … —
+/// quoting the packet it is about, as received (see [`quote`]). traceroute
+/// and mtr find their probes again by what is quoted.
+pub fn icmp_error(from: Ipv4Addr, kind: u8, code: u8, quote: &[u8]) -> Option<Vec<u8>> {
+    // A quote is cut short of the length its header claims: read the source as is.
+    let to = Ipv4Addr::from(<[u8; 4]>::try_from(quote.get(12..16)?).ok()?);
+    let mut message = vec![kind, code, 0, 0, 0, 0, 0, 0];
+    message.extend_from_slice(quote);
+    let sum = !checksum(&message);
+    message[2..4].copy_from_slice(&sum.to_be_bytes());
+    Some(ipv4(from, to, IpProtocol::Icmp, message.len(), |buf| buf.copy_from_slice(&message)))
+}
+
+/// What an ICMP error quotes of a packet: its IP header and 8 bytes beyond.
+pub fn quote(packet: &[u8]) -> Option<Vec<u8>> {
+    let ip = Ipv4Packet::new_checked(packet).ok()?;
+    let len = (usize::from(ip.header_len()) + 8).min(packet.len());
+    Some(packet[..len].to_vec())
+}
+
+/// The one's-complement sum of 16-bit words (RFC 1071), not yet inverted.
+fn checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = data.chunks(2).map(|w| u32::from(u16::from_be_bytes([w[0], *w.get(1).unwrap_or(&0)]))).sum();
+    while sum > 0xffff {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    sum as u16
 }
 
 fn ipv4(src: Ipv4Addr, dst: Ipv4Addr, protocol: IpProtocol, len: usize, emit: impl FnOnce(&mut [u8])) -> Vec<u8> {
