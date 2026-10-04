@@ -68,11 +68,11 @@ export class Warp implements Host, Way {
     if (this.state === "up") return this.machine.control(this.up());
     if (this.state === "connecting") return;
     this.state = "connecting";
-    status.net("connecting", "WARP 连接中");
+    status.net("connecting", "WARP connecting");
     try {
       let device = load();
       if (!device) {
-        status.net("connecting", "WARP 注册中");
+        status.net("connecting", "WARP registering");
         device = await register(call);
         save(device);
         this.machine.control("net known");
@@ -163,7 +163,7 @@ export class Warp implements Host, Way {
     this.state = "down";
     this.hangUp();
     this.machine.control(`net down ${why}`);
-    status.net("down", "WARP 已断开");
+    status.net("down", "WARP offline");
   }
 
   private hangUp() {

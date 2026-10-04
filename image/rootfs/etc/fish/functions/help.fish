@@ -1,11 +1,11 @@
 function help --description 'What this machine can do'
     set -l rows \
-        'ls  cd  tree  grep' '都是真命令，随便用' \
-        blog '文章列表' \
-        'cat 文章.md' '排版后阅读' \
-        'open 文章.md' '在浏览器里读网页版' \
-        'fastfetch  htop' '看看这台机器' \
-        'net on' '接入互联网，然后 curl、ping、ssh'
+        'ls  cd  tree  grep' 'real commands, go ahead' \
+        blog 'the posts' \
+        'cat post.md' 'read one, typeset' \
+        'open post.md' 'read it as a web page' \
+        'fastfetch  htop' 'look at this machine' \
+        'net on' 'go online: curl, ping, ssh, mtr'
 
     echo
     set -l hl (set_color 4DE8FF)
@@ -21,10 +21,10 @@ function help --description 'What this machine can do'
     end
     echo
     set_color 7E8590
-    echo '  文件第一次被读到时才下载，'
-    echo '  留意页面底部。'
-    echo '  一切只在你的浏览器里，'
-    echo '  随便折腾，刷新即复原。'
+    echo '  Files download when first read:'
+    echo '  watch the line at the bottom.'
+    echo '  It all lives in your browser:'
+    echo '  break anything, reload to undo.'
     set_color normal
     echo
 end

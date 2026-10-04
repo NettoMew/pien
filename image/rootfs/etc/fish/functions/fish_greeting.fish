@@ -14,14 +14,15 @@ function fish_greeting
     echo
     echo '  '$b'From pixels to registers.'$n
     echo
-    echo '  这是一台真正的 Linux，'
-    echo '  此刻就运行在你的浏览器里。'
+    echo '  A real Linux, running right'
+    echo '  here in your browser.'
     echo '  '$dim(uname -m)" · Alpine $alpine · fish $fish"$n
-    echo '  '$dim"Linux $kernel · $mem MB 内存"$n
+    echo '  '$dim"Linux $kernel · $mem MB of memory"$n
     echo
-    echo '  文章在 '$hl'~/blog'$n'，读到才下载。'
-    echo '  试试  '$hl'ls -l blog'$n
-    echo '        '$hl'cat blog/hello.md'$n
-    echo '        '$hl'help'$n
+    echo '  Posts are in '$hl'~/blog'$n', fetched'
+    echo '  as you read them.'
+    echo '  Try  '$hl'ls -l blog'$n
+    echo '       '$hl'cat blog/hello.md'$n
+    echo '       '$hl'help'$n
     echo
 end

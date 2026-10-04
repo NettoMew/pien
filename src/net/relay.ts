@@ -76,7 +76,7 @@ export class Relay implements Way {
     const key = stored();
     if (!key) return this.fail("nokey", true);
     this.state = "connecting";
-    status.net("connecting", "中继 连接中");
+    status.net("connecting", "Relay connecting");
 
     const url = new URL(URL_, location.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -132,7 +132,7 @@ export class Relay implements Way {
     this.state = "down";
     this.hangUp();
     this.machine.control(`net down ${why}`);
-    if (!quietly) status.net("down", "中继 已断开");
+    if (!quietly) status.net("down", "Relay offline");
   }
 
   private hangUp() {
@@ -145,7 +145,7 @@ export class Relay implements Way {
   private show(now = false) {
     if (this.state !== "up" || (!now && performance.now() - this.shown < 500)) return;
     this.shown = performance.now();
-    status.net("up", `中继  ↓${formatBytes(this.rx)}  ↑${formatBytes(this.tx)}`);
+    status.net("up", `Relay  ↓${formatBytes(this.rx)}  ↑${formatBytes(this.tx)}`);
   }
 }
 

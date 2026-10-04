@@ -29,7 +29,7 @@ const STYLE = `
 html{background:var(--bg);color:var(--fg);color-scheme:dark}
 body{margin:0 auto;max-width:44rem;padding:clamp(24px,6vw,72px) clamp(20px,5vw,40px);
   font:17px/1.9 -apple-system,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
-code,pre,.prompt,.meta,footer{font-family:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+code,pre,.prompt,.meta,footer{font-family:"Monaspace Neon",ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
 .prompt{margin:0 0 3.5rem;font-size:14px;color:var(--muted)}.prompt a{color:var(--muted)}.prompt .path{color:var(--cyan)}
 h1{margin:0;font-size:2rem;line-height:1.35;letter-spacing:.01em}
@@ -43,7 +43,7 @@ blockquote{margin:1.6em 0;padding:0 0 0 1.2em;border-left:2px solid var(--cyan);
 hr{border:0;border-top:1px solid var(--line);margin:3em 0}
 img{max-width:100%}
 .posts{list-style:none;padding:0;margin-top:2.4rem}.posts li{display:flex;gap:1.4rem;align-items:baseline;margin:0;padding:.7rem 0;border-top:1px solid var(--line)}
-.posts time{flex:none;font:13px "Geist Mono",ui-monospace,monospace;color:var(--muted)}
+.posts time{flex:none;font:13px "Monaspace Neon",ui-monospace,monospace;color:var(--muted)}
 footer{margin-top:5rem;padding-top:1.4rem;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;gap:1.4rem;flex-wrap:wrap}
 footer a{color:var(--muted)}
 `;
@@ -65,7 +65,7 @@ function page(site: Site, { title, description, prompt, body }: { title: string;
 <body>
 <p class="prompt"><a href="${site.base}">guest@home</a> ${prompt}</p>
 ${body}
-<footer><a href="${site.base}">回到终端</a><a href="${site.base}blog/">全部文章</a><a href="${site.base}feed.xml">RSS</a></footer>
+<footer><a href="${site.base}">Back to the terminal</a><a href="${site.base}blog/">All posts</a><a href="${site.base}feed.xml">RSS</a></footer>
 </body>
 </html>
 `;
@@ -86,11 +86,11 @@ ${marked.parse(post.body, { async: false })}
 
 export function indexPage(site: Site, posts: Post[]): string {
   return page(site, {
-    title: `博客 — ${TITLE}`,
-    description: "文章列表",
+    title: `Blog — ${TITLE}`,
+    description: "All posts",
     prompt: `<span class="path">~</span> ❯ blog`,
     body: `<main>
-<h1>博客</h1>
+<h1>Blog</h1>
 <ul class="posts">
 ${posts.map((p) => `<li><time>${p.date}</time><a href="${site.base}blog/${p.slug}/">${escape(p.title)}</a></li>`).join("\n")}
 </ul>
@@ -116,7 +116,7 @@ ${p.date ? `<pubDate>${new Date(`${p.date}T00:00:00Z`).toUTCString()}</pubDate>`
 <channel>
 <title>${TITLE}</title>
 <link>${home}</link>
-<description>一台运行在浏览器里的 Linux，也是一个博客。</description>
+<description>A real Linux in your browser, and a blog.</description>
 ${items.join("\n")}
 </channel>
 </rss>

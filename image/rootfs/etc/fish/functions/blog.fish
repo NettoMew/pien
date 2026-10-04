@@ -22,6 +22,6 @@ function blog --description 'List the posts'
         end
     end
     test $COLUMNS -lt 60; or echo
-    echo '  '$dim'阅读：cat blog/<文件名>'$n
+    echo '  '$dim'Read one: cat blog/<file>'$n
     echo
 end

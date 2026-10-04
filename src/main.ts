@@ -25,7 +25,7 @@ const dim = ink(palette.muted);
 const off = "\x1b[0m";
 term.write(
   `\x1b[?25l\r\n  \x1b[1mguest@home${off}\r\n` +
-    `  ${dim}${cold ? "正在冷启动这台机器 …" : "正在载入这台机器的内存快照 …"}${off}\r\n\r\n`,
+    `  ${dim}${cold ? "Booting this machine …" : "Loading this machine's memory …"}${off}\r\n\r\n`,
 );
 
 const downloads = new Map<string, { loaded: number; total: number }>();
@@ -44,12 +44,12 @@ machine.emulator.add_listener("download-progress", ({ file_name, loaded, total }
     `\x1b[2K\r  ${ink(palette.cyan)}${"━".repeat(filled)}${ink(palette.line)}${"━".repeat(width - filled)}${off}` +
       `  ${dim}${formatBytes(done)}${all && done <= all ? ` / ${formatBytes(all)}` : ""}${off}`,
   );
-  status.set("loading", all ? `载入 ${Math.round(ratio * 100)}%` : "载入中");
+  status.set("loading", all ? `Loading ${Math.round(ratio * 100)}%` : "Loading");
 });
 
 machine.emulator.add_listener("download-error", ({ file_name }) => {
-  status.set("error", "载入失败");
-  term.write(`\r\n\r\n  ${ink(palette.red)}没能载入 ${file_name}，刷新试试。${off}\r\n`);
+  status.set("error", "Failed to load");
+  term.write(`\r\n\r\n  ${ink(palette.red)}Could not load ${file_name}. Try reloading.${off}\r\n`);
 });
 
 // ─── What the guest says to the page ─────────────────────────────────────────
@@ -70,10 +70,10 @@ term.parser.registerOscHandler(133, (data) => {
   if (!ready && data.startsWith("B")) {
     ready = true;
     performance.mark("first prompt");
-    status.set("running", `运行中 · ${(performance.now() / 1000).toFixed(1)} s`);
+    status.set("running", `Running · ${(performance.now() / 1000).toFixed(1)} s`);
     const blobs = new URL(vm(BLOBS), location.href).pathname;
     watchFetches(blobs, vm(files.fsJson), (path, bytes, ms, cached) =>
-      status.fetched(path, cached ? "缓存" : `${formatBytes(bytes)} · ${Math.round(ms)} ms`),
+      status.fetched(path, cached ? "cached" : `${formatBytes(bytes)} · ${Math.round(ms)} ms`),
     );
   }
   return false;
