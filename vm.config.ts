@@ -58,10 +58,10 @@ export function v86Options(at: (file: string) => string, files: Manifest["files"
     vga_bios: { url: at(files.vgaBios) },
     virtio_console: { type: "none" }, // hvc0: the visitor's terminal, with real window-size events; we render it
     uart1: true, // ttyS1: a quiet control line between page and guest
-    // eth0, wired to nothing until `net warp` (src/warp/). The MTU fits inside
-    // WARP's tunnel. On restore v86 would pick a new MAC behind the guest's
-    // back; keep the one the snapshot has.
-    net_device: { type: "virtio", mtu: 1280 },
+    // eth0, wired to nothing until `net on` or `net warp` (src/net/); hostd
+    // sets its address and MTU then. On restore v86 would pick a new MAC
+    // behind the guest's back; keep the one the snapshot has.
+    net_device: { type: "virtio" },
     preserve_mac_from_state_image: true,
     disable_keyboard: true,
     disable_mouse: true,

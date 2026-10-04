@@ -7,7 +7,7 @@ import { Machine } from "./machine.ts";
 import { formatBytes, status } from "./status.ts";
 import { createTerminal, openLink } from "./terminal.ts";
 import { ink, palette } from "./theme.ts";
-import { known, net } from "./warp/index.ts";
+import { known, net } from "./net/index.ts";
 
 const vm = (file: string) => `${import.meta.env.BASE_URL}vm/${file}`;
 const cold = new URLSearchParams(location.search).has("cold"); // ?cold boots the kernel instead
@@ -60,7 +60,7 @@ term.onTitleChange((title) => (document.title = title.trim() ? `${title.trim()} 
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
-  if (verb === "net") void net(rest[0] ?? "", machine);
+  if (verb === "net") void net(rest[0] ?? "", rest.slice(1).join(";"), machine);
   return true;
 });
 

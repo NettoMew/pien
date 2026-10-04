@@ -1,15 +1,15 @@
 // `net warp`: the guest's network card, through the WARP client (warp.wasm),
-// over a WebSocket to the edge. Loaded the first time a visitor asks.
-//
-// The guest learns what happened over the control line: `net up <address>`,
-// `net down <why>`, read by hostd; its `net` command turns that into words.
+// over a WebSocket to the edge. Loaded the first time a visitor asks; see
+// ../net/index.ts for how a way out is chosen and how the guest hears of it.
 
 import type { Machine } from "../machine.ts";
+import type { Way } from "../net/index.ts";
 import { formatBytes, status } from "../status.ts";
 import { ApiError, type Call, type Device, openBytes, register, remove } from "./api.ts";
 import { Core, DOWN, type Event, type Host } from "./core.ts";
-import { STORE } from "./index.ts";
 import wasm from "./warp.wasm?url";
+
+const STORE = "warp";
 
 const BASE = `${import.meta.env.BASE_URL}warp/`;
 const TICK = 10_000;
@@ -34,16 +34,15 @@ function save(device: Device | null) {
   }
 }
 
-let session: Session | undefined;
-
-export async function handle(verb: string, machine: Machine) {
-  session ??= new Session(machine);
-  if (verb === "warp") await session.connect();
-  if (verb === "off") session.disconnect();
-  if (verb === "forget") await session.forget();
+/** Deletes this browser's device, at Cloudflare and here. */
+export async function forget(machine: Machine) {
+  const device = load();
+  save(null);
+  machine.control("net forgotten");
+  if (device) await remove(call, device).catch(() => {});
 }
 
-class Session implements Host {
+export class Warp implements Host, Way {
   private readonly machine: Machine;
   private core?: Core;
   private device?: Device;
@@ -58,7 +57,6 @@ class Session implements Host {
 
   constructor(machine: Machine) {
     this.machine = machine;
-    machine.onFrame((frame) => this.core?.fromGuest(frame));
     // Phones suspend background tabs and drop their sockets: come back up.
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden && this.wanted && this.state === "down") void this.connect();
@@ -67,7 +65,7 @@ class Session implements Host {
 
   async connect() {
     this.wanted = true;
-    if (this.state === "up") return this.machine.control(`net up ${this.device!.v4}`);
+    if (this.state === "up") return this.machine.control(this.up());
     if (this.state === "connecting") return;
     this.state = "connecting";
     status.net("connecting", "WARP 连接中");
@@ -87,22 +85,23 @@ class Session implements Host {
     this.dial();
   }
 
-  disconnect() {
+  disconnect(quietly = false) {
     this.wanted = false;
     if (this.state === "off") return;
     this.state = "off";
     this.core?.close(); // close_notify, while the socket still takes it
     this.hangUp();
-    this.machine.control("net down off");
+    if (!quietly) this.machine.control("net down off");
     status.net("off", "");
   }
 
-  async forget() {
-    const device = load();
-    this.disconnect();
-    save(null);
-    this.machine.control("net forgotten");
-    if (device) await remove(call, device).catch(() => {});
+  frame(frame: Uint8Array) {
+    this.core?.fromGuest(frame);
+  }
+
+  /** WARP's tunnel: one address, the gateway the client answers ARP for, Cloudflare's DNS. */
+  private up() {
+    return `net up warp ${this.device!.v4}/32 172.16.0.1 1.1.1.1 1280`;
   }
 
   // ─── Host: what the WARP client hands back ─────────────────────────────────
@@ -121,7 +120,7 @@ class Session implements Host {
   event(event: Event) {
     if (event.kind === "up") {
       this.state = "up";
-      this.machine.control(`net up ${this.device!.v4}`);
+      this.machine.control(this.up());
       this.timer = setInterval(() => this.core?.tick(), TICK);
       return this.show(true);
     }

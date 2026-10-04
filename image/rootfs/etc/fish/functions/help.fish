@@ -5,7 +5,7 @@ function help --description 'What this machine can do'
         'cat 文章.md' '排版后阅读' \
         'open 文章.md' '在浏览器里读网页版' \
         'fastfetch  htop' '看看这台机器' \
-        'net warp' '接入互联网，然后 curl'
+        'net on' '接入互联网，然后 curl、ping'
 
     echo
     set -l hl (set_color 4DE8FF)

@@ -17,6 +17,8 @@ npm run dev            # http://localhost:5173
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
 | `npm run typecheck` / `npm run build` | 类型检查 / 生产构建，产物在 `dist/` |
+| `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
+| `RELAY=host:port npm run dev` | 开发服务器把 `/relay` 转给那里的中继（默认 127.0.0.1:8095，见 docs/relay.md） |
 | `npm run warp -- register` / `delete` | 注册或删除一个开发用的 WARP 设备，配合 `warp/examples/edge.rs` 直连入口（见 [docs/warp.md](docs/warp.md)） |
 | `WARP_EDGE=host:port npm run dev` | 本机连不上 WARP 入口时，让开发服务器走别的路径，比如一条 SSH 转发 |
 
@@ -35,7 +37,7 @@ npm run dev            # http://localhost:5173
 
 **页面**（`src/`）。xterm.js 渲染终端。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时校时、启动会话），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。底部状态栏通过浏览器的资源计时，实时显示每一次按需加载。触屏设备上多一排快捷键：Tab、↑、Ctrl-C 和几个常用命令。
 
-**联网**（`warp/`、`src/warp/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net warp` 时，页面才加载一个用 Rust 写的 wasm：它在浏览器里完成整条路径——以太网帧 ⇄ IP 包 ⇄ capsule ⇄ HTTP/2 ⇄ TLS（带客户端证书、钉住入口公钥），把这台机器作为一台主机接入 Cloudflare WARP。服务器上只有一根管道，只能连 WARP 的入口，只看得到密文。设备在访客的浏览器里匿名注册，凭据也只存在那里。详见 [docs/warp.md](docs/warp.md)。
+**联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。另一条路 `net warp` 用浏览器里的 Rust/wasm 客户端直连 Cloudflare WARP（试验，[docs/warp.md](docs/warp.md)）。
 
 **排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点。输出到管道时仍然是原文。
 
@@ -60,11 +62,12 @@ npm run dev            # http://localhost:5173
 | `cat blog/hello.md` | 只请求这一篇，911 B |
 | 内核 | 1.6 MB；客户机可用内存 58 MB |
 | 整个系统 | 623 个文件块，43 MB，压缩后 9.0 MB，全部按需加载 |
+| `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
 | `net warp` | 第一次 4 秒连上（含注册），之后 1.7 秒；客户机里下载 1.7 MB/s；WARP 客户端 brotli 后 111 KB，用到才加载 |
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)，联网方案见 [docs/network.md](docs/network.md)。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)（`net on`）和 [docs/warp.md](docs/warp.md)（`net warp`）。
 
 ## 踩过的坑
 
@@ -77,4 +80,6 @@ npm run dev            # http://localhost:5173
 - **快照里的握手不能用 FIFO**：hostd 先置标志、再写 FIFO 叫醒 session；如果 session 被重新拉起时标志已经在了，它就不读 FIFO，hostd 永远卡在打开 FIFO 上，而且被存进快照：之后控制通道全部失灵，时钟也停在构建时间。现在 session 改成轮询标志文件。
 - **wasm 里的 rustls**：rustls 的 `std` 特性要读系统时钟，`wasm32-unknown-unknown` 上没有；所以关掉 `std`，改用它的 unbuffered API，时间由页面传进去。
 - **在这台开发机上连不上 WARP 入口**：TCP 能连，TLS 一看到 `consumer-masque` 这个 SNI 就被复位。本地开发用 `WARP_EDGE` 走 SSH 转发。
+- **命令替换会吞掉转义序列**：fish 的 `set x (f)` 捕获 `f` 的标准输出，`f` 里 printf 的 OSC 就到不了终端。要发给页面的序列写到 stderr。
+- **hickory 的 DoT 默认没有根证书**：不开 `webpki-roots` 特性，根证书库是空的，所有 TLS 上游都会失败。
 - **欢迎语不能重排**：欢迎语是构建时录下、原样回放的，所以每行都控制在手机能放下的宽度。

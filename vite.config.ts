@@ -59,8 +59,14 @@ function vmManifest(): Plugin {
   };
 }
 
+// `net on` reaches the relay (relay/) at <base>relay; in development, one
+// running here — or, through an SSH forward, somewhere else (RELAY=host:port).
+const relay = { [`/relay`]: { target: `ws://${process.env.RELAY ?? "127.0.0.1:8095"}`, ws: true } };
+
 export default defineConfig({
   plugins: [vmManifest(), blog(), warpPipes()],
+  server: { proxy: relay },
+  preview: { proxy: relay },
   build: {
     target: "es2022", // top-level await
     assetsInlineLimit: 0, // keep v86.wasm a separate, cacheable file

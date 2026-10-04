@@ -90,12 +90,12 @@ hostd（root，ttyS1）◀── net up / net down ── 页面
 
 ## 页面：`src/warp/`
 
-- **`index.ts`（常驻，很小）**：转交 `net warp`、`net off`、`net forget`，按需 `import()` 下面这些；页面加载时告诉客户机「这个浏览器已经有设备」（`net known`），客户机据此跳过说明。
+- **入口是 `src/net/index.ts`**（常驻，和 `net on` 的中继共用）：转交 `net warp`、`net off`、`net forget`，按需 `import()` 下面这些；页面加载时告诉客户机「这个浏览器已经有设备」（`net known`），客户机据此跳过说明。
 - **`session.ts`**：
   - 加载 wasm，准备凭据，连 `WebSocket(/warp/edge)`；
   - 接上 v86 总线：`net0-send` 进 wasm，wasm 产出的帧发回 `net0-receive`；
   - 每 10 秒调一次 `tick()`；页面从后台回到前台时，如果之前断了，自动重连；
-  - 用控制行告诉 hostd 结果：`net up 172.16.0.2`，或 `net down <原因>`。
+  - 用控制行告诉 hostd 结果：`net up warp 172.16.0.2/32 172.16.0.1 1.1.1.1 1280`，或 `net down <原因>`。
 - **`api.ts`**：调注册 API，凭据存进 `localStorage["warp"]`，包括 id、token、私钥、入口公钥和分到的地址。页面和 `scripts/warp.ts` 共用这份代码。
 - **`core.ts`**：wasm 接口的类型化封装。
 - **状态栏**：`⇅ WARP ↓1.2 MB ↑0.3 MB`；连接中显示琥珀色，断开显示灰色。
@@ -103,10 +103,10 @@ hostd（root，ttyS1）◀── net up / net down ── 页面
 ## 客户机
 
 - **内核**：加 `INET`、`NETDEVICES`、`NET_CORE`、`VIRTIO_NET`；不跑 DHCP，不需要 `PACKET`。
-- **v86**：`net_device: { type: "virtio", mtu: 1280 }` 和 `preserve_mac_from_state_image`。没有 `relay_url`，所以 v86 不自带网络后端，帧完全由页面处理。顺带去掉了 v86 默认插着的那块 NE2000 网卡。
+- **v86**：`net_device: { type: "virtio" }` 和 `preserve_mac_from_state_image`；MTU 1280 由 hostd 在 `net up` 时设置。没有 `relay_url`，所以 v86 不自带网络后端，帧完全由页面处理。顺带去掉了 v86 默认插着的那块 NE2000 网卡。
 - **快照里的网卡**：快照里有 eth0（MTU 1280），但没有地址、没有路由。不联网时程序会立刻报 Network unreachable，不会卡住。
 - **`hostd`**（root，ttyS1）：
-  - `net up <地址>`：给 eth0 配上 `/32` 地址、到 `172.16.0.1` 的主机路由和默认路由；
+  - `net up warp <地址>/32 <网关> <DNS> <MTU>`：给 eth0 配上地址、MTU、到网关的主机路由、默认路由和 `/etc/resolv.conf`；
   - `net down <原因>`：撤掉这些；
   - 两者都会把结果写进 `/run/net/state`。
 - **`rc`**：启用 `lo`，打开 `ping_group_range`，让普通用户也能 ping。

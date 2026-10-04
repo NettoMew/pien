@@ -1,4 +1,4 @@
-function net --description 'The network: net warp | net off | net forget' --argument-names verb
+function net --description 'The network: net on | net off | net login | net warp' --argument-names verb
     set -l dim (set_color 7E8590)
     set -l hl (set_color 4DE8FF)
     set -l n (set_color normal)
@@ -6,28 +6,24 @@ function net --description 'The network: net warp | net off | net forget' --argu
     set -l state (string split ' ' -- $line)
 
     switch "$verb"
-        case warp
-            if test "$state[1]" = up
-                __net_up $state[2]
+        case on warp
+            set -l way relay
+            test $verb = warp; and set way warp
+            if test "$state[1]" = up -a "$state[2]" = $way
+                __net_up $state[2..3]
                 return
             end
-            if not test -e /run/net/known; and not __net_consent
+            if test $way = warp; and not test -e /run/net/known; and not __net_consent
                 return 1
             end
-            echo waiting >/run/net/state
-            # A private escape sequence; the page around this terminal acts on
-            # it, and tells hostd how it went (see hostd).
-            printf '\e]7337;net;warp\a'
-            echo $dim'  正在接入 Cloudflare WARP …'$n
-            for i in (seq 300)
-                read line </run/net/state
-                set state (string split ' ' -- $line)
-                test "$state[1]" = waiting; or break
-                sleep 0.2
+            set state (__net_ask $verb)
+            if test "$state[1]" = down -a "$state[2]" = nokey
+                __net_login; or return 1
+                set state (__net_ask $verb)
             end
             switch $state[1]
                 case up
-                    __net_up $state[2]
+                    __net_up $state[2..3]
                 case down
                     __net_why $state[2..]
                     return 1
@@ -38,21 +34,62 @@ function net --description 'The network: net warp | net off | net forget' --argu
         case off
             printf '\e]7337;net;off\a'
             echo $dim'  已断开。'$n
+        case login
+            __net_login
+        case logout
+            printf '\e]7337;net;logout\a'
+            echo $dim'  已忘掉中继口令。'$n
         case forget
             printf '\e]7337;net;forget\a'
             echo $dim'  已删除这个浏览器里的 WARP 设备。'$n
         case ''
             if test "$state[1]" = up
-                echo '  '$hl'已接入'$n' Cloudflare WARP，地址 '$state[2]
+                echo '  '$hl'已接入'$n' '(__net_name $state[2])'，地址 '$state[3]
             else
                 echo '  没有联网。'
             end
-            echo $dim'  net warp 接入 · net off 断开'$n
-            echo $dim'  net forget 删除 WARP 设备'$n
+            echo $dim'  net on 接入 · net off 断开 · net login 输入口令'$n
+            echo $dim'  net warp 改走 Cloudflare WARP（试验）'$n
         case '*'
-            echo 'net: 用法 net [warp | off | forget]' >&2
+            echo 'net: 用法 net [on | off | login | logout | warp | forget]' >&2
             return 1
     end
+end
+
+function __net_name --argument-names way
+    if test "$way" = warp
+        echo Cloudflare WARP
+    else
+        echo 中继
+    end
+end
+
+# Asks the page for a way out, then waits for hostd to say how it went.
+# Prints the new state, word by word.
+function __net_ask --argument-names verb
+    echo waiting >/run/net/state
+    # A private escape sequence; the page around this terminal acts on it.
+    # On stderr: stdout is what the caller captures.
+    printf '\e]7337;net;%s\a' $verb >&2
+    set -l way relay
+    test $verb = warp; and set way warp
+    echo (set_color 7E8590)'  正在接入'(__net_name $way)' …'(set_color normal) >&2
+    for i in (seq 300)
+        read -l line </run/net/state
+        if test "$line" != waiting
+            string split ' ' -- $line
+            return
+        end
+        sleep 0.2
+    end
+    echo timeout
+end
+
+function __net_login
+    read -l -s -P '  中继口令：' password; or return 1
+    test -n "$password"; or return 1
+    printf '\e]7337;net;login;%s\a' (string escape --style=url -- $password)
+    echo (set_color 7E8590)'  记住了，只在这个浏览器里，而且只存由它算出的密钥。'(set_color normal)
 end
 
 function __net_consent
@@ -76,22 +113,30 @@ function __net_consent
     string match -qi y -- $answer
 end
 
-function __net_up --argument-names address
+function __net_up --argument-names way address
     set -l dim (set_color 7E8590)
     set -l hl (set_color 4DE8FF)
     set -l n (set_color normal)
-    echo '  '$hl'已接入'$n' Cloudflare WARP，地址 '$address
+    echo '  '$hl'已接入'$n' '(__net_name $way)'，地址 '$address
     # Ask Cloudflare which way out this took.
     set -l trace (curl -s --max-time 15 https://1.1.1.1/cdn-cgi/trace)
     set -l ip (string replace -rf '^ip=' '' -- $trace)
     set -l colo (string replace -rf '^colo=' '' -- $trace)
     set -q ip[1]; and echo '  出口 '$ip' · 节点 '$colo
-    echo $dim'  试试 curl wttr.in/?0 · ping 1.1.1.1'$n
+    echo $dim'  试试 curl wttr.in/?0 · ping 1.1.1.1 · ip a'$n
 end
 
 function __net_why
-    set -l why "和 WARP 的连接出错（$argv）。"
+    set -l why "联网出错（$argv）。"
     switch "$argv[1]"
+        case nokey
+            set why '中继要口令：net login。'
+        case badkey
+            set why '中继不认这个口令：net login 重新输入。'
+        case busy
+            set why '中继正忙，稍后再试。'
+        case norelay
+            set why '连不上中继。'
         case api
             set why '没能注册 WARP 设备，稍后再试。'
             test "$argv[2]" = 429; and set why '注册得太频繁了，过一会儿再试。'
@@ -104,7 +149,7 @@ function __net_why
         case refused
             set why "WARP 拒绝了连接（HTTP $argv[2]）。"
         case timeout
-            set why 'WARP 没有回应，连接断了。'
+            set why '对方没有回应，连接断了。'
         case closed
             set why '连接断了。'
         case off

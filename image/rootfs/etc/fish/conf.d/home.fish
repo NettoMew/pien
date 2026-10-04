@@ -6,6 +6,7 @@ set -gx LANG C.UTF-8
 set -gx COLORTERM truecolor
 set -gx EDITOR vi
 set -gx LESS -R
+set -gx PATH $PATH /usr/sbin /sbin # ip, ifconfig, route: looking is allowed
 
 # Palette — mirrors src/theme.ts
 set -g fish_color_normal E7E9EE

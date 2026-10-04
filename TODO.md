@@ -14,7 +14,7 @@
 5. **「动态」**：最早的需求之一，还没做。设想是 `~/moments`，`moments` 命令列出、`cat` 阅读，再加一个发布流程。
 6. **内容和快照解耦**：现在每发一篇文章都要重建镜像和快照（约 30 秒）。动态这种更新频繁的内容，应该在开机时从服务器拉取，比如用 v86 的 `create_file` 写进客户机。
 7. **继续瘦身首次加载**：现在约 6.1 MB（gzip 后），网速 135 KB/s 时要等约 47 秒。可以从快照里少预热一些页缓存，或者先显示静态内容。
-8. **联网**：「WARP 直通」原型已在本地跑通（`net warp` 之后 `curl`、`ping` 都能用）。还剩离线端到端测试（W5）和线上部署（W6，待确认）。见 [docs/warp.md](docs/warp.md)；备选方案见 [docs/network.md](docs/network.md)。
+8. **联网**：`net on` 经自建中继（[docs/relay.md](docs/relay.md)）已在本地跑通，`ip a`、`curl`、`ping` 都能用；还剩限速、限流量、SOCKS5 的测试（R3）和上线（R4，待确认）。`net warp`（[docs/warp.md](docs/warp.md)）保留为试验。
 
 ## 质量与兼容
 

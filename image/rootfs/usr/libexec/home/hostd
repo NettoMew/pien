@@ -3,12 +3,11 @@
 #
 #   attach <epoch>   a browser is here: set the clock, start the session
 #   detach           (image build only) rewind to "waiting for a browser"
-#   net up <addr>    the WARP tunnel is up (src/warp/): put eth0 on it
+#   net up <way> <address/prefix> <gateway> <dns> <mtu>
+#                    a way out is up (src/net/): put eth0 on it
 #   net down <why>   it went down, or was turned off: take eth0 off again
 #   net known        this browser already has a WARP device …
 #   net forgotten    … or no longer
-#
-# Every address lies behind one gateway; the page answers its ARP itself.
 #
 # Window sizes need no message: the virtio console reports them itself.
 
@@ -29,12 +28,13 @@ while read -r cmd arg; do
 		set -- $arg
 		case $1 in
 		up)
-			ip link set eth0 up
+			ip link set eth0 mtu "$6" up
 			ip addr flush dev eth0
-			ip addr add "$2/32" dev eth0
-			ip route add 172.16.0.1 dev eth0
-			ip route add default via 172.16.0.1
-			echo "up $2" > /run/net/state
+			ip addr add "$3" dev eth0
+			ip route add "$4" dev eth0 2> /dev/null # on-link already, unless /32
+			ip route add default via "$4"
+			echo "nameserver $5" > /etc/resolv.conf
+			echo "up $2 ${3%/*}" > /run/net/state
 			;;
 		down)
 			ip addr flush dev eth0
