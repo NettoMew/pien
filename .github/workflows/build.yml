@@ -1,6 +1,6 @@
 # Builds the whole site from scratch — WARP client, kernel, image, the
-# workbench's toolchain disk, snapshots, page — checks it in a real browser,
-# and hands the result over as the "site" artifact,
+# workbench's toolchain disk, snapshots, page — checks it with a pretend phone
+# and in a real browser, and hands the result over as the "site" artifact,
 # ready for any static host (public/_headers sets the cache rules).
 
 name: build
@@ -41,6 +41,7 @@ jobs:
 
       - run: npm run build:kernel
       - run: npm run build:vm # the toolchain disk is built with this runner's Docker
+      - run: npm run check:usb
       - run: npm run lint
       - run: npm run build # type-checks first
 

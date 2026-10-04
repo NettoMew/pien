@@ -10,6 +10,7 @@ function help --description 'What this machine can do'
     if __on_workbench
         set -a rows \
             nvim 'the editor, set up for every language here' \
+            'adb  fastboot' 'a phone over USB, as on any desk' \
             home 'back to the small machine'
     else
         set -a rows workbench 'compilers, nvim, adb: a bigger machine'

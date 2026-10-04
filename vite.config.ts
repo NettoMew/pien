@@ -92,16 +92,17 @@ export default defineConfig({
   preview: { proxy: relay },
   build: {
     assetsInlineLimit: 0, // keep v86.wasm a separate, cacheable file
-    // Everything is needed up front, but the libraries change far less often
-    // than the page, and the machine's (v86, xterm.js) on another clock than
-    // the interface's: each set in a chunk of its own stays cached across
-    // releases of the others.
+    // Nearly everything is needed up front, but the libraries change far less
+    // often than the page, and the machine's (v86, xterm.js) on another clock
+    // than the interface's: each set in a chunk of its own stays cached
+    // across releases of the others. USB's (Tango) waits for the first phone.
     rolldownOptions: {
       input: { index: "index.html", blog: BLOG_CSS },
       output: {
         codeSplitting: {
           groups: [
             { name: "machine", test: /node_modules\/(v86|@xterm)\//, priority: 2 },
+            { name: "usb", test: /node_modules\/@yume-chan\//, priority: 2 },
             { name: "interface", test: /node_modules/, priority: 1 },
           ],
         },

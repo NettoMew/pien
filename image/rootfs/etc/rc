@@ -24,10 +24,25 @@ if [ -b /dev/sda ]; then
 	done
 fi
 
+# The console's ports by the names the page gives them, where udev would put
+# them: virtio-1 to virtio-3, whatever number the kernel gave the device.
+mkdir -p /dev/virtio-ports
+for port in /sys/class/virtio-ports/*; do
+	ln -sf "../${port##*/}" "/dev/virtio-ports/$(cat "$port/name")"
+done
+
 # Files the visitor drops on the page, or picks for `drop` (see hostd).
 mkdir -p /run/drop
 echo none > /run/drop/state
 chmod 666 /run/drop/state
+
+# A phone on the visitor's USB, for adb and fastboot (see hostd). The state
+# files are the guest's to mark "waiting" in; hostd writes the rest.
+mkdir -p /run/usb
+for tool in adb fastboot; do
+	echo off > "/run/usb/$tool"
+	chmod 666 "/run/usb/$tool"
+done
 
 # The network: loopback now, eth0 once a visitor types `net warp` (see hostd).
 # The state file is the guest's to mark "waiting" in; hostd writes the rest.

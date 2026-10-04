@@ -11,6 +11,7 @@ import { Machine } from "./machine.ts";
 import { known, net, unwire as unwireNet } from "./net/index.ts";
 import { useMachine } from "./store.ts";
 import { opened, openLink, term } from "./terminal.ts";
+import { introduce, usb, unwire as unwireUsb } from "./usb/index.ts";
 
 const vm = (file: string) => `${import.meta.env.BASE_URL}vm/${file}`;
 const params = new URLSearchParams(location.search);
@@ -27,12 +28,14 @@ term.onData((data) => live && machine?.write(data));
 term.onBinary((data) => live && machine?.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
 term.onResize(({ cols, rows }) => live && machine?.resize(cols, rows));
 
-// The guest's `open`, `net`, `drop` and `workbench`/`home` print a private
-// escape sequence; see open.fish, net.fish, drop.fish and workbench.fish.
+// The guest's `open`, `net`, `drop`, `workbench`/`home`, and on the workbench
+// `adb`, `fastboot` and `usb`, print a private escape sequence; see open.fish,
+// net.fish, drop.fish, workbench.fish and the workbench's __usb.fish.
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
   if (verb === "net" && machine) void net(rest[0] ?? "", rest.slice(1).join(";"), machine);
+  if (verb === "usb" && machine) void usb(rest[0] ?? "", machine);
   if (verb === "drop" && machine) pick(machine);
   if (verb === "machine" && (rest[0] === "home" || rest[0] === "workbench") && rest[0] !== useMachine.getState().machine) {
     useMachine.setState({ next: rest[0] });
@@ -83,8 +86,9 @@ export async function stop() {
   machine = undefined;
   live = false;
   unwireNet();
+  await unwireUsb();
   term.reset();
-  await stopping?.emulator.destroy();
+  await stopping?.destroy();
 }
 
 async function resume(started: Machine, name: MachineName) {
@@ -111,11 +115,13 @@ async function resume(started: Machine, name: MachineName) {
 
   // Sets the guest's clock and time zone to the browser's (and, on a cold
   // boot, starts the session); tells it whether this browser already has a
-  // WARP device. A cold-booted guest opens its control line after we got
-  // here, and says so: it is greeted again then.
+  // WARP device, and the workbench this browser's adb key. A cold-booted
+  // guest opens its control line after we got here, and says so: it is
+  // greeted again then.
   const greet = () => {
     started.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
     if (known()) started.control("net known");
+    if (name === "workbench") void introduce(started);
   };
   started.onControl((line) => line === "ready" && greet());
 

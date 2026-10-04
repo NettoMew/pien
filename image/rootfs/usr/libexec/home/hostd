@@ -10,6 +10,14 @@
 #   net down <why>   it went down, or was turned off: take eth0 off again
 #   net known        this browser already has a WARP device …
 #   net forgotten    … or no longer
+#   usb key <private> <public> <name>
+#                    this browser's adb key, in base64: PKCS#8, and Android's
+#                    own form of its public half; adb signs with it
+#   usb up <tool> <serial> <name>
+#                    a phone is attached for adb or fastboot (src/usb/):
+#                    bridge it to where the tool is pointed
+#   usb down <tool> <why>
+#                    it went away, or was let go: take the bridge down
 #   drop <n>         files from the visitor's computer wait in /.drop/<n>
 #                    (src/drop.ts): move them into ~/drop
 #   drop none        … or the visitor chose none
@@ -24,6 +32,44 @@ zone() {
 	[ -f "/usr/share/zoneinfo/$1" ] || return
 	ln -sf "/usr/share/zoneinfo/$1" /etc/localtime
 	echo "$1" > /etc/timezone
+}
+
+# adb and fastboot reach the phone as they would one on the network: adb at
+# 127.0.0.1:6555, fastboot at 127.0.0.1:6554 (their usual ports a thousand
+# up, clear of the range adb probes for emulators). From there the bytes go
+# through a port of the console to the page, and on to the phone.
+bridge() {
+	case $1 in
+	adb) set -- adb 6555 /dev/virtio-ports/virtio-1 ;;
+	fastboot) set -- fastboot 6554 /dev/virtio-ports/virtio-2 ;;
+	*) return 1 ;;
+	esac
+	[ -f "/run/usb/$1.pid" ] && return
+	# A session of its own, so the connections it forks go down with it; big
+	# blocks, for fewer trips through the emulated kernel.
+	setsid socat -b 65536 "TCP-LISTEN:$2,bind=127.0.0.1,reuseaddr,fork" "OPEN:$3" 2> /dev/null &
+	echo $! > "/run/usb/$1.pid"
+}
+
+unbridge() {
+	[ -f "/run/usb/$1.pid" ] || return
+	kill -- "-$(cat "/run/usb/$1.pid")" 2> /dev/null
+	rm -f "/run/usb/$1.pid"
+}
+
+# The key adb signs with, in the files adb reads it from; the phone shows
+# the name in its list of computers it allows.
+adbkey() {
+	dir=/home/guest/.android
+	mkdir -p "$dir"
+	{
+		echo '-----BEGIN PRIVATE KEY-----'
+		echo "$1" | fold -w 64
+		echo '-----END PRIVATE KEY-----'
+	} > "$dir/adbkey"
+	echo "$2 $3" > "$dir/adbkey.pub"
+	chmod 600 "$dir/adbkey"
+	chown -R guest:guest "$dir"
 }
 
 # Dropped files arrive in a directory the kernel has never seen, so nothing
@@ -85,6 +131,26 @@ while read -r cmd arg; do
 			;;
 		known) touch /run/net/known ;;
 		forgotten) rm -f /run/net/known ;;
+		esac
+		;;
+	usb)
+		set -- $arg
+		case $1 in
+		key) adbkey "$2" "$3" "$4" ;;
+		up)
+			tool=$2
+			bridge "$tool"
+			shift 2
+			# adb's wrapper connects its server to the bridge; a phone back from
+			# a reboot is found again by the server itself, which keeps trying.
+			echo "up $*" > "/run/usb/$tool"
+			;;
+		down)
+			tool=$2
+			unbridge "$tool"
+			shift 2
+			echo "down $*" > "/run/usb/$tool"
+			;;
 		esac
 		;;
 	drop) drop "$arg" ;;
