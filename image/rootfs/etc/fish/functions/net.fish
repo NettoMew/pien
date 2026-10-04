@@ -135,6 +135,10 @@ function __net_why
             set why '中继不认这个口令：net login 重新输入。'
         case busy
             set why '中继正忙，稍后再试。'
+        case quota
+            set why '这次会话的流量额度用完了。'
+        case idle
+            set why '太久没动静，中继先断开了；net on 再连。'
         case norelay
             set why '连不上中继。'
         case api

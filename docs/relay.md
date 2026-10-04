@@ -19,12 +19,12 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
 | 线路格式 | 一条二进制消息就是一个以太网帧，和 v86 的 wsproxy 一样，只是外面多一层加密 |
 | L2 | smoltcp 回 ARP，学访客的 MAC；网关 MAC 用 QEMU 的 `52:55:0a:00:02:02` |
 | TCP | smoltcp 扮演网关一端。**先真的连上目标，再回访客的 SYN**：对方拒绝就回 RST（curl 报 Connection refused），连不上就回 ICMP 主机不可达，和真实网络一样 |
-| UDP | 绕过 smoltcp：每个（访客端口，目的地）一个真实的 UDP socket，闲置 60 秒回收 |
+| UDP | 绕过 smoltcp：每个（访客端口，目的地）一个真实的 UDP socket，闲置 60 秒回收；对方端口关着时，访客收到 ICMP「端口不可达」 |
 | ICMP | ping 走 Linux 的非特权 ping socket（`ping_group_range`；容器里默认对所有组开放）；回给访客的 echo reply 由中继构造 |
 | DNS | 发往 10.0.2.3:53 的查询由中继解析；上游默认走 DoT（Cloudflare），也可以配 Quad9、Google、系统解析或某个地址；可以配静态 hosts |
 | 策略 | 默认只放行公网：私网、回环、链路本地、CGNAT、文档段、组播、保留地址都拦下（回 ICMP「主机被禁止」）。检查的是**真正要连的地址**，所以 DNS 指向内网也没用。端口白名单、黑名单（默认拦 25）、别名（把某个访客地址映射到真实地址，不受检查） |
-| 出口 | TCP 直连，或者经 SOCKS5（比如本机的 Mayami）；UDP 和 ICMP 直连 |
-| 限额 | 会话数（默认 4）、每会话 TCP 连接数（256）、闲置超时（30 分钟） |
+| 出口 | TCP 直连，或者经 SOCKS5（比如本机的 Mayami）：代理说拒绝，访客照样收到 RST；UDP 和 ICMP 直连 |
+| 限额 | 会话数（默认 4）、每会话 TCP 连接数（256）、每会话限速（两个方向各一个令牌桶，带一秒的突发）、每会话流量额度、闲置超时（30 分钟）。额度用完以关闭码 4001 结束，闲置以 4002 结束，访客看到对应的中文说明 |
 | 记录 | 只有计数：会话数、拒绝次数、上下行字节、连接数。**不记录任何目的地址** |
 
 ### 内层加密（`relay/src/channel.rs`）
@@ -44,6 +44,36 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
 - 临时 ECDH 提供前向保密；两边的随机数让旧消息无法重放，计数器保证顺序。
 - 口令错了，中继在一秒后以 1008 关闭，访客看到「中继不认这个口令」。
 - 页面那边全部用 WebCrypto 实现，不需要 wasm。
+
+### 配置
+
+全部可选，只有密钥必填，见 `relay/src/config.rs` 开头：
+
+```toml
+listen = "127.0.0.1:8095"
+key = "…"                       # relay key < 口令
+
+[dns]
+upstream = "cloudflare-tls"     # quad9-tls、google-tls、system，或一个地址
+hosts = { "nas.home" = "192.168.1.10" }
+
+[egress]
+socks5 = "127.0.0.1:7890"       # TCP 经 SOCKS5；默认直连
+udp = true
+
+[policy]
+allow_private = false
+allow_ports = []                # 空：所有端口
+deny_ports = [25]
+aliases = { "10.0.2.4" = "192.168.1.10" }
+
+[limits]
+sessions = 4
+flows = 256
+rate = 0                        # 每秒字节数，每个方向；0：不限
+quota = 0                       # 每会话字节数；0：不限
+idle = 1800                     # 秒
+```
 
 ## 页面：`src/net/`
 
@@ -74,7 +104,8 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
 
 - `cargo test --manifest-path relay/Cargo.toml`（CI 在跑）：
   - 单元测试：报文构造、加密通道（错误密钥、重放、乱序）、配置、策略；
-  - 端到端：smoltcp 扮演一台有以太网和 ARP 的访客，经真实的 WebSocket 和加密通道连进进程内的中继，再经别名访问本机的测试服务：TCP 双向和半关闭、被拒（SYN-SENT 时就收到 RST）、被策略拦下（ICMP）、UDP、DNS、ping 网关、错误密钥被拒。
+  - 端到端（11 项）：smoltcp 扮演一台有以太网和 ARP 的访客，经真实的 WebSocket 和加密通道连进进程内的中继，再经别名访问本机的测试服务：TCP 双向和半关闭、被拒（SYN-SENT 时就收到 RST）、被策略拦下（ICMP）、UDP、UDP 端口不可达、DNS、ping 网关、错误密钥被拒、经 SOCKS5 出口（连通和被拒）、限速、额度、闲置；
+  - Linux 上多一项 `ping_goes_out`：经 ping socket 真的发出 ICMP。在 v2in0 的容器里 21 项全部通过。
 
 ## 本地开发
 

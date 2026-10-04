@@ -17,10 +17,12 @@ use tokio_tungstenite::tungstenite::{self, Message};
 
 use crate::Shared;
 use crate::channel::{self, HELLO, WELCOME};
-use crate::session;
+use crate::session::{self, End};
 
 const HANDSHAKE: Duration = Duration::from_secs(10);
 const KEEPALIVE: Duration = Duration::from_secs(25);
+/// How long to wait for the page to close after we did.
+const LINGER: Duration = Duration::from_secs(2);
 
 /// Binds the configured address; the second half serves until dropped.
 pub async fn bind(shared: Arc<Shared>) -> std::io::Result<(SocketAddr, impl Future<Output = ()>)> {
@@ -72,35 +74,54 @@ async fn connection(shared: Arc<Shared>, stream: TcpStream) {
     }
     shared.stats.sessions.fetch_add(1, Ordering::Relaxed);
 
-    // Frames both ways, sealed, while the session runs.
+    // Frames both ways, sealed and paced, while the session runs.
+    let rate = shared.config.limits.rate;
     let (to_session, from_page) = mpsc::channel::<Vec<u8>>(256);
     let (to_page, mut from_session) = mpsc::channel::<Vec<u8>>(256);
-    let reader = tokio::spawn(async move {
+    let mut reader = tokio::spawn(async move {
+        let mut bucket = Bucket::new(rate);
         while let Some(sealed) = next(&mut source).await {
             let Some(frame) = opener.open(&sealed) else { break }; // tampered with, or out of step
-            if to_session.send(frame).await.is_err() {
-                break;
+            // Once the session is over, keep reading until the page closes too:
+            // closing with its frames unread would reset the connection, and
+            // take our close frame — and its reason — down with it.
+            if !to_session.is_closed() {
+                bucket.take(frame.len()).await;
+                let _ = to_session.send(frame).await;
             }
         }
     });
     let writer = tokio::spawn(async move {
+        let mut bucket = Bucket::new(rate);
         let mut keepalive = tokio::time::interval(KEEPALIVE);
         loop {
             tokio::select! {
                 frame = from_session.recv() => match frame {
-                    Some(frame) => if sink.send(Message::binary(sealer.seal(&frame))).await.is_err() { break },
+                    Some(frame) => {
+                        bucket.take(frame.len()).await;
+                        if sink.send(Message::binary(sealer.seal(&frame))).await.is_err() { break }
+                    }
                     None => break,
                 },
                 _ = keepalive.tick() => if sink.send(Message::Ping(Default::default())).await.is_err() { break },
             }
         }
-        close(&mut sink, CloseCode::Normal, "").await;
+        sink
     });
 
     let started = Instant::now();
     let summary = session::run(shared.clone(), from_page, to_page).await;
-    reader.abort();
-    let _ = writer.await;
+    if let Ok(mut sink) = writer.await {
+        let (code, reason) = match summary.end {
+            End::Left => (CloseCode::Normal, ""),
+            End::Quota => (CloseCode::Library(4001), "quota"),
+            End::Idle => (CloseCode::Library(4002), "idle"),
+        };
+        close(&mut sink, code, reason).await;
+    }
+    if tokio::time::timeout(LINGER, &mut reader).await.is_err() {
+        reader.abort();
+    }
     shared.stats.active.fetch_sub(1, Ordering::SeqCst);
     shared.stats.up.fetch_add(summary.up, Ordering::Relaxed);
     shared.stats.down.fetch_add(summary.down, Ordering::Relaxed);
@@ -112,6 +133,36 @@ async fn connection(shared: Arc<Shared>, stream: TcpStream) {
         bytes(summary.down),
         summary.connections
     );
+}
+
+/// Paces bytes to `rate` a second, with a second's worth of burst; 0: no limit.
+struct Bucket {
+    rate: f64,
+    tokens: f64,
+    last: Instant,
+}
+
+impl Bucket {
+    fn new(rate: u64) -> Self {
+        Self {
+            rate: rate as f64,
+            tokens: rate as f64,
+            last: Instant::now(),
+        }
+    }
+
+    async fn take(&mut self, n: usize) {
+        if self.rate == 0.0 {
+            return;
+        }
+        let now = Instant::now();
+        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * self.rate).min(self.rate);
+        self.last = now;
+        self.tokens -= n as f64;
+        if self.tokens < 0.0 {
+            tokio::time::sleep(Duration::from_secs_f64(-self.tokens / self.rate)).await;
+        }
+    }
 }
 
 /// The next binary message; `None` once the page has gone.

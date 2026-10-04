@@ -14,6 +14,7 @@
 //! socket of its own out there.
 
 use std::collections::{HashMap, VecDeque};
+use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, Instant as Clock};
@@ -65,6 +66,8 @@ pub enum End {
     Left,
     /// Nothing from the guest for `limits.idle` seconds.
     Idle,
+    /// More than `limits.quota` bytes, both ways together.
+    Quota,
 }
 
 enum Event {
@@ -78,6 +81,8 @@ enum Event {
         to_port: u16,
         data: Vec<u8>,
     },
+    /// Nothing listens on that UDP port out there.
+    PortClosed(Key),
     Echo {
         from: Ipv4Addr,
         ident: u16,
@@ -107,6 +112,7 @@ pub async fn run(
 ) -> Summary {
     let mut session = Session::new(shared);
     let idle = Duration::from_secs(session.shared.config.limits.idle.max(1));
+    let quota = session.shared.config.limits.quota;
     let mut heard = Clock::now();
     let end = loop {
         session.step();
@@ -121,6 +127,9 @@ pub async fn run(
         }
         if heard.elapsed() > idle {
             break End::Idle;
+        }
+        if quota > 0 && session.up + session.down > quota {
+            break End::Quota;
         }
         let wait = session.iface.poll_delay(session.now(), &session.sockets);
         let wait = wait
@@ -434,6 +443,15 @@ impl Session {
             Event::Datagram { from, to_port, data } => {
                 self.tell_guest(Some(packet::udp(from, SocketAddrV4::new(GUEST, to_port), &data)));
             }
+            Event::PortClosed((port, to)) => {
+                // What the far host says, about a datagram like the guest's.
+                let original = packet::udp(SocketAddrV4::new(GUEST, port), to, &[]);
+                self.tell_guest(packet::unreachable(
+                    *to.ip(),
+                    &original,
+                    Icmpv4DstUnreachable::PortUnreachable,
+                ));
+            }
             Event::Echo {
                 from,
                 ident,
@@ -603,12 +621,19 @@ async fn datagrams(
                 Some(data) => drop(socket.send(&data).await),
                 None => return,
             },
-            got = socket.recv(&mut buf) => if let Ok(n) = got {
-                let data = buf[..n].to_vec();
-                if events.send(Event::Datagram { from: key.1, to_port: key.0, data }).await.is_err() {
+            got = socket.recv(&mut buf) => {
+                let event = match got {
+                    Ok(n) => Event::Datagram { from: key.1, to_port: key.0, data: buf[..n].to_vec() },
+                    // An ICMP "port unreachable" for an earlier datagram (Windows calls it a reset).
+                    Err(e) if matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::ConnectionReset) => {
+                        Event::PortClosed(key)
+                    }
+                    Err(_) => continue,
+                };
+                if events.send(event).await.is_err() {
                     return;
                 }
-            },
+            }
             _ = tokio::time::sleep(DATAGRAM_IDLE) => return,
         }
     }

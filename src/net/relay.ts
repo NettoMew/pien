@@ -12,6 +12,8 @@ const URL_ = import.meta.env.VITE_RELAY_URL || `${import.meta.env.BASE_URL}relay
 /** QEMU's user network, as the relay serves it (relay/src/session.rs). */
 const UP = "net up relay 10.0.2.15/24 10.0.2.2 10.0.2.3 1500";
 const HANDSHAKE = 15_000;
+/** What the relay's close codes mean (relay/src/server.rs), in the guest's words (net.fish). */
+const CLOSED: Record<number, string> = { 1008: "badkey", 1013: "busy", 4001: "quota", 4002: "idle" };
 
 const subtle = crypto.subtle;
 const text = (s: string) => new TextEncoder().encode(s);
@@ -84,7 +86,7 @@ export class Relay implements Way {
     const inbox = new Inbox(socket);
     socket.onclose = (event) => {
       if (this.socket !== socket) return;
-      const why = event.code === 1008 ? "badkey" : event.code === 1013 ? "busy" : this.state === "up" ? "closed" : "norelay";
+      const why = CLOSED[event.code] ?? (this.state === "up" ? "closed" : "norelay");
       this.fail(why);
     };
 

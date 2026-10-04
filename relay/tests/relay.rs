@@ -5,6 +5,8 @@
 
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant as Clock};
 
 use futures_util::{SinkExt, StreamExt};
@@ -29,6 +31,11 @@ const GUEST_MAC: EthernetAddress = EthernetAddress([0x52, 0x54, 0x00, 0x12, 0x34
 const BULK: usize = 16 << 20;
 
 async fn relay() -> SocketAddr {
+    relay_with("").await
+}
+
+/// A relay in this process; `more` adds tables to its configuration.
+async fn relay_with(more: &str) -> SocketAddr {
     let config = Config::parse(&format!(
         r#"
         listen = "127.0.0.1:0"
@@ -38,6 +45,7 @@ async fn relay() -> SocketAddr {
         hosts = {{ "test.home" = "{SERVICES}" }}
         [policy]
         aliases = {{ "{SERVICES}" = "127.0.0.1" }}
+        {more}
         "#,
         "11".repeat(32)
     ))
@@ -70,14 +78,20 @@ async fn connect(relay: SocketAddr, key: [u8; 32]) -> Option<Guest> {
             }
         }
     });
+    let closed = Arc::new(Mutex::new(None));
+    let close_code = closed.clone();
     tokio::spawn(async move {
         while let Some(Ok(message)) = source.next().await {
-            if let Message::Binary(sealed) = message {
-                let _ = incoming.send(opener.open(&sealed).expect("frames from the relay open"));
+            match message {
+                Message::Binary(sealed) => {
+                    let _ = incoming.send(opener.open(&sealed).expect("frames from the relay open"));
+                }
+                Message::Close(frame) => *close_code.lock().unwrap() = frame.map(|f| u16::from(f.code)),
+                _ => {}
             }
         }
     });
-    Some(Guest::new(to_relay, from_relay))
+    Some(Guest::new(to_relay, from_relay, closed))
 }
 
 async fn binary<S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin>(
@@ -149,10 +163,17 @@ struct Guest {
     port: u16,
     /// Every frame the relay sent, for the ones smoltcp would not show us.
     seen: Vec<Vec<u8>>,
+    /// The relay's close code, once it has hung up.
+    closed: Arc<Mutex<Option<u16>>>,
+    hung_up: bool,
 }
 
 impl Guest {
-    fn new(to_relay: UnboundedSender<Vec<u8>>, from_relay: UnboundedReceiver<Vec<u8>>) -> Self {
+    fn new(
+        to_relay: UnboundedSender<Vec<u8>>,
+        from_relay: UnboundedReceiver<Vec<u8>>,
+        closed: Arc<Mutex<Option<u16>>>,
+    ) -> Self {
         let mut wire = Wire::default();
         let mut iface = Interface::new(
             IfaceConfig::new(HardwareAddress::Ethernet(GUEST_MAC)),
@@ -173,6 +194,8 @@ impl Guest {
             started: Clock::now(),
             port: 49152,
             seen: vec![],
+            closed,
+            hung_up: false,
         }
     }
 
@@ -218,9 +241,16 @@ impl Guest {
                 .poll_delay(now, &self.sockets)
                 .map_or(10_000, |d| d.total_micros())
                 .min(10_000);
+            if self.hung_up {
+                tokio::time::sleep(Duration::from_micros(wait)).await;
+                continue;
+            }
             tokio::select! {
                 frame = self.from_relay.recv() => {
-                    let frame = frame.expect("the relay hung up");
+                    let Some(frame) = frame else {
+                        self.hung_up = true;
+                        continue;
+                    };
                     self.seen.push(frame.clone());
                     self.wire.rx.push_back(frame);
                     while let Ok(frame) = self.from_relay.try_recv() {
@@ -231,6 +261,10 @@ impl Guest {
                 _ = tokio::time::sleep(Duration::from_micros(wait)) => {}
             }
         }
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        *self.closed.lock().unwrap()
     }
 
     fn socket(&mut self, handle: SocketHandle) -> &mut tcp::Socket<'static> {
@@ -265,7 +299,9 @@ async fn bulk_server() -> u16 {
             tokio::spawn(async move {
                 let chunk = vec![7; 64 << 10];
                 for _ in 0..BULK / chunk.len() {
-                    stream.write_all(&chunk).await.unwrap();
+                    if stream.write_all(&chunk).await.is_err() {
+                        return; // the guest stopped listening
+                    }
                 }
             });
         }
@@ -512,4 +548,222 @@ async fn a_wrong_key_is_turned_away() {
     assert!(connect(relay, [0x22; 32]).await.is_none());
     assert!(connect(relay, KEY).await.is_some());
     let _ = channel::key; // the same derivation `net login` uses; see channel.rs
+}
+
+// ─── R3: egress through SOCKS5, limits, closed UDP ports ─────────────────────
+
+/// Enough of a SOCKS5 server: no authentication, CONNECT to an IPv4 address.
+/// Counts the connections it was asked for.
+async fn socks5() -> (u16, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counter = asked.clone();
+    tokio::spawn(async move {
+        while let Ok((mut client, _)) = listener.accept().await {
+            let counter = counter.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 262];
+                client.read_exact(&mut buf[..2]).await.unwrap();
+                let methods = buf[1] as usize;
+                client.read_exact(&mut buf[..methods]).await.unwrap();
+                client.write_all(&[5, 0]).await.unwrap();
+                client.read_exact(&mut buf[..10]).await.unwrap(); // VER CMD RSV ATYP=1 IPv4 PORT
+                assert_eq!(&buf[..4], &[5, 1, 0, 1]);
+                let target = SocketAddr::from(([buf[4], buf[5], buf[6], buf[7]], u16::from_be_bytes([buf[8], buf[9]])));
+                counter.fetch_add(1, Ordering::SeqCst);
+                match tokio::net::TcpStream::connect(target).await {
+                    Ok(mut out) => {
+                        client.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+                        let _ = tokio::io::copy_bidirectional(&mut client, &mut out).await;
+                    }
+                    Err(_) => client.write_all(&[5, 5, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap(), // refused
+                }
+            });
+        }
+    });
+    (port, asked)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn through_socks5() {
+    let (proxy, asked) = socks5().await;
+    let relay = relay_with(&format!("[egress]\nsocks5 = \"127.0.0.1:{proxy}\"")).await;
+    let (count, closed) = (count_server().await, closed_port().await);
+    let mut guest = connect(relay, KEY).await.unwrap();
+
+    let handle = guest.tcp((SERVICES, count));
+    let (mut sent, mut reply, mut buf) = (false, Vec::new(), [0; 64]);
+    guest
+        .until(Duration::from_secs(10), |g| {
+            let socket = g.socket(handle);
+            if !sent && socket.may_send() {
+                socket.send_slice(b"through the proxy").unwrap();
+                socket.close();
+                sent = true;
+            }
+            while let Ok(n @ 1..) = socket.recv_slice(&mut buf) {
+                reply.extend_from_slice(&buf[..n]);
+            }
+            (sent && finished(socket)).then_some(())
+        })
+        .await
+        .expect("an answer through the proxy");
+    assert_eq!(String::from_utf8_lossy(&reply), "got 17");
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+
+    // The proxy says "refused": the guest hears a reset, as if directly.
+    let handle = guest.tcp((SERVICES, closed));
+    guest
+        .until(Duration::from_secs(5), |g| {
+            (g.socket(handle).state() == tcp::State::Closed).then_some(())
+        })
+        .await
+        .expect("refused through the proxy");
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rate_paces_the_session() {
+    const RATE: usize = 1_000_000;
+    const WANT: usize = 3_000_000;
+    let (relay, bulk) = (
+        relay_with(&format!("[limits]\nrate = {RATE}")).await,
+        bulk_server().await,
+    );
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let handle = guest.tcp((SERVICES, bulk));
+    let started = Clock::now();
+    let (mut got, mut buf) = (0, vec![0; 1 << 16]);
+    guest
+        .until(Duration::from_secs(20), |g| {
+            while let Ok(n @ 1..) = g.socket(handle).recv_slice(&mut buf) {
+                got += n;
+            }
+            (got >= WANT).then_some(())
+        })
+        .await
+        .expect("it arrives, slowly");
+    let secs = started.elapsed().as_secs_f64();
+    println!("rate {RATE} B/s: {WANT} B in {secs:.2} s");
+    // A second's burst, then the rate: about 2 s for 3 MB, framing included.
+    assert!((1.5..6.0).contains(&secs), "{secs:.2} s");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_quota_ends_the_session() {
+    let (relay, bulk) = (relay_with("[limits]\nquota = 1000000").await, bulk_server().await);
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let handle = guest.tcp((SERVICES, bulk));
+    let (mut got, mut buf) = (0, vec![0; 1 << 16]);
+    let code = guest
+        .until(Duration::from_secs(10), |g| {
+            while let Ok(n @ 1..) = g.socket(handle).recv_slice(&mut buf) {
+                got += n;
+            }
+            g.close_code()
+        })
+        .await;
+    assert_eq!(code, Some(4001), "closed for the quota");
+    assert!(got < 2_000_000, "{got} bytes");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn silence_ends_the_session() {
+    let relay = relay_with("[limits]\nidle = 1").await;
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let code = guest.until(Duration::from_secs(5), |g| g.close_code()).await;
+    assert_eq!(code, Some(4002), "closed for being idle");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_udp_port_says_so() {
+    let relay = relay().await;
+    let closed = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let (handle, _) = guest.udp();
+    for _ in 0..2 {
+        // The first datagram finds out; the "unreachable" comes with the next receive.
+        guest
+            .sockets
+            .get_mut::<udp::Socket>(handle)
+            .send_slice(b"anyone?", (IpAddress::Ipv4(SERVICES), closed))
+            .unwrap();
+        if guest
+            .until(Duration::from_secs(2), |g| g.unreachable(3).then_some(()))
+            .await
+            .is_some()
+        {
+            return;
+        }
+    }
+    panic!("no ICMP port unreachable");
+}
+
+/// Ping out through an unprivileged ping socket: Linux, with this user's
+/// group in net.ipv4.ping_group_range (the default in containers and on
+/// recent distributions). 192.0.2.10 is an alias for 127.0.0.1.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn ping_goes_out() {
+    let relay = relay().await;
+    let mut guest = connect(relay, KEY).await.unwrap();
+    // Learn the gateway's MAC address first.
+    let handle = guest.tcp((Ipv4Addr::new(10, 0, 2, 2), 1));
+    guest
+        .until(Duration::from_secs(5), |g| {
+            (g.socket(handle).state() == tcp::State::Closed).then_some(())
+        })
+        .await;
+
+    let request = Icmpv4Repr::EchoRequest {
+        ident: 9,
+        seq_no: 3,
+        data: b"out there",
+    };
+    let ip = Ipv4Repr {
+        src_addr: Ipv4Addr::new(10, 0, 2, 15),
+        dst_addr: SERVICES,
+        next_header: IpProtocol::Icmp,
+        payload_len: request.buffer_len(),
+        hop_limit: 64,
+    };
+    let ethernet = EthernetRepr {
+        src_addr: GUEST_MAC,
+        dst_addr: relay::session::GATEWAY_MAC,
+        ethertype: EthernetProtocol::Ipv4,
+    };
+    let mut frame = vec![0; 14 + ip.buffer_len() + request.buffer_len()];
+    ethernet.emit(&mut EthernetFrame::new_unchecked(&mut frame[..]));
+    ip.emit(
+        &mut Ipv4Packet::new_unchecked(&mut frame[14..]),
+        &ChecksumCapabilities::default(),
+    );
+    request.emit(
+        &mut Icmpv4Packet::new_unchecked(&mut frame[34..]),
+        &ChecksumCapabilities::default(),
+    );
+    guest.to_relay.send(frame).unwrap();
+    let reply = guest
+        .until(Duration::from_secs(5), |g| {
+            g.seen.iter().find_map(|f| {
+                let ip = Ipv4Packet::new_checked(&f[14..]).ok()?;
+                let icmp = Icmpv4Packet::new_checked(ip.payload()).ok()?;
+                (ip.next_header() == IpProtocol::Icmp && u8::from(icmp.msg_type()) == 0).then(|| {
+                    (
+                        ip.src_addr(),
+                        icmp.echo_ident(),
+                        icmp.echo_seq_no(),
+                        icmp.data().to_vec(),
+                    )
+                })
+            })
+        })
+        .await;
+    assert_eq!(reply, Some((SERVICES, 9, 3, b"out there".to_vec())));
 }
