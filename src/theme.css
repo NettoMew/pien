@@ -1,0 +1,29 @@
+/* Grok Night (src/theme.ts) by role, for every stylesheet here. The values
+   themselves arrive as --term-* custom properties in each page's head
+   (vite.config.ts, scripts/lib/blog.ts). */
+@theme {
+  --color-*: initial;
+  --color-black: var(--term-black);
+  --color-screen: var(--term-background);
+  --color-ink: var(--term-foreground);
+  --color-faint: var(--term-bright-black);
+  --color-line: var(--term-selection-background);
+  --color-red: var(--term-red);
+  --color-green: var(--term-green);
+  --color-yellow: var(--term-yellow);
+  --color-cyan: var(--term-cyan);
+
+  --font-*: initial;
+  --font-mono: "Monaspace Neon", ui-monospace, monospace;
+}
+
+/* Every glyph bleeds a little light of its own colour into the glass, with
+   the faintest red and cyan fringe of three guns not quite in line. */
+@utility phosphor {
+  text-shadow:
+    0 0 1px color-mix(in oklab, currentColor 50%, transparent),
+    0 0 6px color-mix(in oklab, currentColor 25%, transparent),
+    0 0 14px color-mix(in oklab, currentColor 10%, transparent),
+    -0.5px 0 color-mix(in oklab, --theme(--color-red) 14%, transparent),
+    0.5px 0 color-mix(in oklab, --theme(--color-cyan) 14%, transparent);
+}

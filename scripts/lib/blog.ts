@@ -1,8 +1,11 @@
 // Every post also exists as a plain web page — for search engines, for links
 // people share, and for `open blog/<post>.md` in the terminal — plus an index
-// and an RSS feed. Quiet pages in the terminal's palette; no JavaScript.
+// and an RSS feed. Quiet pages in the terminal's palette, typeset by Tailwind
+// Typography (src/blog.css); no JavaScript.
 
 import { marked } from "marked";
+import image from "../../image/image.config.ts";
+import { theme, themeCss } from "../../src/theme.ts";
 import type { Post } from "./content.ts";
 
 export interface Site {
@@ -10,7 +13,8 @@ export interface Site {
   url: string; // absolute origin for the feed, e.g. "https://example.com" (may be empty)
 }
 
-const TITLE = "guest@home";
+/** The site goes by its prompt's name. */
+const TITLE = `guest@${image.hostname}`;
 
 const escape = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -23,76 +27,64 @@ const excerpt = (post: Post) =>
     .trim()
     .slice(0, 120);
 
-const STYLE = `
-:root{--bg:#0a0b0e;--fg:#e7e9ee;--muted:#7e8590;--line:#1f232b;--panel:#14161c;--cyan:#4de8ff;--amber:#ffb547}
-*{box-sizing:border-box}
-html{background:var(--bg);color:var(--fg);color-scheme:dark}
-body{margin:0 auto;max-width:44rem;padding:clamp(24px,6vw,72px) clamp(20px,5vw,40px);
-  font:17px/1.9 -apple-system,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
-code,pre,.prompt,.meta,footer{font-family:"Monaspace Neon",ui-monospace,"SF Mono",Menlo,Consolas,monospace}
-a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
-.prompt{margin:0 0 3.5rem;font-size:14px;color:var(--muted)}.prompt a{color:var(--muted)}.prompt .path{color:var(--cyan)}
-h1{margin:0;font-size:2rem;line-height:1.35;letter-spacing:.01em}
-h2{margin:2.6em 0 .6em;font-size:1.3rem;color:var(--cyan)}h3{margin:2em 0 .5em;font-size:1.1rem}
-.meta{margin:.6rem 0 2.6rem;font-size:13px;color:var(--muted)}
-p,ul,ol{margin:0 0 1.2em}li{margin:.3em 0}
-code{font-size:.88em;color:var(--amber)}
-pre{margin:1.6em 0;padding:1.2em 1.4em;overflow-x:auto;background:var(--panel);border-radius:8px;line-height:1.7}
-pre code{color:#c9ced6;font-size:14px}
-blockquote{margin:1.6em 0;padding:0 0 0 1.2em;border-left:2px solid var(--cyan);color:var(--muted);font-style:italic}
-hr{border:0;border-top:1px solid var(--line);margin:3em 0}
-img{max-width:100%}
-.posts{list-style:none;padding:0;margin-top:2.4rem}.posts li{display:flex;gap:1.4rem;align-items:baseline;margin:0;padding:.7rem 0;border-top:1px solid var(--line)}
-.posts time{flex:none;font:13px "Monaspace Neon",ui-monospace,monospace;color:var(--muted)}
-footer{margin-top:5rem;padding-top:1.4rem;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;gap:1.4rem;flex-wrap:wrap}
-footer a{color:var(--muted)}
-`;
+interface Page {
+  title: string;
+  description: string;
+  /** Where the prompt stands, and what it typed to get here. */
+  cwd: string;
+  command: string;
+  body: string;
+}
 
-function page(site: Site, { title, description, prompt, body }: { title: string; description: string; prompt: string; body: string }) {
+/** A page around `body`, headed by the prompt that would have printed it, as fish draws it. */
+function page(site: Site, stylesheet: string, { title, description, cwd, command, body }: Page) {
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="bg-screen">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#0a0b0e">
+<meta name="theme-color" content="${theme.background}">
+<style>${themeCss}</style>
 <title>${escape(title)}</title>
 <meta name="description" content="${escape(description)}">
 <link rel="icon" href="${site.base}favicon.svg" type="image/svg+xml">
 <link rel="alternate" type="application/rss+xml" title="${TITLE}" href="${site.base}feed.xml">
-<style>${STYLE}</style>
+<link rel="stylesheet" href="${stylesheet}">
 </head>
-<body>
-<p class="prompt"><a href="${site.base}">guest@home</a> ${prompt}</p>
+<body class="mx-auto max-w-176 px-[clamp(20px,5vw,40px)] py-[clamp(24px,6vw,72px)] font-sans text-[17px]/[1.9] text-ink antialiased">
+<p class="phosphor mb-14 font-mono text-sm"><a href="${site.base}"><span class="text-green">guest</span>@${image.hostname}</a> <span class="text-green">${cwd}</span>&gt; ${command}</p>
 ${body}
-<footer><a href="${site.base}">Back to the terminal</a><a href="${site.base}blog/">All posts</a><a href="${site.base}feed.xml">RSS</a></footer>
+<footer class="mt-20 flex flex-wrap gap-x-6 border-t border-line pt-6 font-mono text-[13px] text-faint *:hover:text-ink"><a href="${site.base}">Back to the terminal</a><a href="${site.base}blog/">All posts</a><a href="${site.base}feed.xml">RSS</a></footer>
 </body>
 </html>
 `;
 }
 
-export function postPage(site: Site, post: Post): string {
-  return page(site, {
+export function postPage(site: Site, stylesheet: string, post: Post): string {
+  return page(site, stylesheet, {
     title: `${post.title} — ${TITLE}`,
     description: excerpt(post),
-    prompt: `<span class="path">~/blog</span> ❯ cat ${escape(post.file)}`,
-    body: `<main><article>
-<h1>${escape(post.title)}</h1>
-<p class="meta">${[post.date, ...post.tags].map(escape).join(" · ")}</p>
+    cwd: "~/blog",
+    command: `cat ${escape(post.file)}`,
+    body: `<main><article class="prose prose-terminal max-w-none text-[17px]/[1.9] prose-headings:phosphor prose-h2:text-cyan prose-a:no-underline prose-a:hover:underline prose-code:font-normal prose-code:before:content-none prose-code:after:content-none prose-pre:font-mono [&_blockquote_p]:before:content-none [&_blockquote_p]:after:content-none">
+<h1 class="mb-0 text-[2rem]/[1.35] font-semibold">${escape(post.title)}</h1>
+<p class="mt-2 mb-10 font-mono text-[13px] text-faint">${[post.date, ...post.tags].map(escape).join(" · ")}</p>
 ${marked.parse(post.body, { async: false })}
 </article></main>`,
   });
 }
 
-export function indexPage(site: Site, posts: Post[]): string {
-  return page(site, {
+export function indexPage(site: Site, stylesheet: string, posts: Post[]): string {
+  return page(site, stylesheet, {
     title: `Blog — ${TITLE}`,
     description: "All posts",
-    prompt: `<span class="path">~</span> ❯ blog`,
+    cwd: "~",
+    command: "blog",
     body: `<main>
-<h1>Blog</h1>
-<ul class="posts">
-${posts.map((p) => `<li><time>${p.date}</time><a href="${site.base}blog/${p.slug}/">${escape(p.title)}</a></li>`).join("\n")}
+<h1 class="phosphor text-[2rem]/[1.35] font-semibold">Blog</h1>
+<ul class="mt-10 divide-y divide-line border-y border-line">
+${posts.map((p) => `<li class="flex items-baseline gap-6 py-3"><time class="flex-none font-mono text-[13px] text-faint">${p.date}</time><a class="hover:text-cyan" href="${site.base}blog/${p.slug}/">${escape(p.title)}</a></li>`).join("\n")}
 </ul>
 </main>`,
   });

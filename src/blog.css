@@ -1,0 +1,35 @@
+/* The posts' web pages (scripts/lib/blog.ts): built on their own, from that
+   file's classes alone, and served without any JavaScript. */
+@import "tailwindcss" source(none);
+@import "@fontsource/monaspace-neon/400.css";
+@import "@fontsource/monaspace-neon/600.css";
+@import "./theme.css";
+@source "../scripts/lib/blog.ts";
+@plugin "@tailwindcss/typography";
+
+/* The posts are Chinese: set in whichever sans the system reads it best in. */
+@theme {
+  --font-sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+}
+
+/* Typography in the terminal's colours — the way `cat` sets a post there
+   (image/rootfs/usr/libexec/home/md.awk). */
+@utility prose-terminal {
+  --tw-prose-body: --theme(--color-ink);
+  --tw-prose-headings: --theme(--color-ink);
+  --tw-prose-lead: --theme(--color-ink);
+  --tw-prose-links: --theme(--color-cyan);
+  --tw-prose-bold: --theme(--color-ink);
+  --tw-prose-counters: --theme(--color-faint);
+  --tw-prose-bullets: --theme(--color-faint);
+  --tw-prose-hr: --theme(--color-line);
+  --tw-prose-quotes: --theme(--color-faint);
+  --tw-prose-quote-borders: --theme(--color-cyan);
+  --tw-prose-captions: --theme(--color-faint);
+  --tw-prose-kbd: --theme(--color-ink);
+  --tw-prose-code: --theme(--color-yellow);
+  --tw-prose-pre-code: --theme(--color-ink);
+  --tw-prose-pre-bg: --theme(--color-black);
+  --tw-prose-th-borders: --theme(--color-line);
+  --tw-prose-td-borders: --theme(--color-line);
+}

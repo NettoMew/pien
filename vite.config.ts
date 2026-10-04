@@ -22,15 +22,18 @@ function palette(): Plugin {
 }
 
 // The posts as web pages (blog/<slug>/), an index (blog/) and a feed
-// (feed.xml): rendered per request in dev, written out by the build. The
+// (feed.xml): rendered per request in dev, written out by the build. Their
+// stylesheet, src/blog.css, is a build entry of its own (see below). The
 // homepage's <noscript> lists them too.
+const BLOG_CSS = "src/blog.css";
+
 function blog(): Plugin {
   let site: Site;
-  const pages = async () => {
+  const pages = async (stylesheet: string) => {
     const posts = await readPosts();
     return new Map([
-      ["blog/index.html", indexPage(site, posts)],
-      ...posts.map((post) => [`blog/${post.slug}/index.html`, postPage(site, post)] as const),
+      ["blog/index.html", indexPage(site, stylesheet, posts)],
+      ...posts.map((post) => [`blog/${post.slug}/index.html`, postPage(site, stylesheet, post)] as const),
       ["feed.xml", feed(site, posts)],
     ]);
   };
@@ -40,15 +43,19 @@ function blog(): Plugin {
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = decodeURIComponent((req.url ?? "/").split("?")[0]!).slice(site.base.length);
-        const all = await pages();
+        const all = await pages(`${site.base}${BLOG_CSS}`);
         const body = all.get(path) ?? all.get(`${path.replace(/\/$/, "")}/index.html`);
         if (!body) return next();
         res.setHeader("Content-Type", path.endsWith(".xml") ? "application/rss+xml; charset=utf-8" : "text/html; charset=utf-8");
         res.end(body);
       });
     },
-    async generateBundle() {
-      for (const [fileName, source] of await pages()) this.emitFile({ type: "asset", fileName, source });
+    async generateBundle(_, bundle) {
+      const css = Object.values(bundle).find((file) => file.type === "asset" && file.originalFileNames.includes(BLOG_CSS));
+      if (!css) return this.error(`${BLOG_CSS} did not come out of the build`);
+      for (const [fileName, source] of await pages(`${site.base}${css.fileName}`)) {
+        this.emitFile({ type: "asset", fileName, source });
+      }
     },
     transformIndexHtml: async (html) => html.replace("<!-- posts -->", postLinks(site, await readPosts())),
   };
@@ -90,6 +97,7 @@ export default defineConfig({
     // the interface's: each set in a chunk of its own stays cached across
     // releases of the others.
     rolldownOptions: {
+      input: { index: "index.html", blog: BLOG_CSS },
       output: {
         codeSplitting: {
           groups: [

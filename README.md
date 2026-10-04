@@ -43,7 +43,7 @@ npm run dev            # http://localhost:5173
 
 **排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点。输出到管道时仍然是原文。
 
-**网页版**（`scripts/lib/blog.ts`）。每篇文章同时生成一个纯静态页面 `/blog/<文章>/`，再加上 `/blog/` 列表和 `/feed.xml`，给搜索引擎、分享链接和 `open` 用。首页的 `<noscript>` 里也列着文章。
+**网页版**（`scripts/lib/blog.ts`）。每篇文章同时生成一个纯静态页面 `/blog/<文章>/`，再加上 `/blog/` 列表和 `/feed.xml`，给搜索引擎、分享链接和 `open` 用。页面没有 JavaScript：顶上是 fish 会打出的那行提示符，正文用 Tailwind Typography 排版，配色和终端相同，和 `cat` 在终端里排的一样。它们的样式表 `src/blog.css` 是单独的构建入口，只收这些页面用到的类。首页的 `<noscript>` 里也列着文章。
 
 **缓存**。`/vm/` 和 `/assets/` 下的文件名都带内容哈希，可以永久缓存（`public/_headers`）。当前用的是哪些文件名，构建时直接打进页面的 JS 里，访问时不用先问服务器。
 
