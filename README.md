@@ -87,5 +87,6 @@ npm run dev            # http://localhost:5173
 - **mtr 要开原始套接字**：访客不是 root，所以 `mtr-packet` 设成 setuid（`image.config.ts` 的 `modes` 现在也作用于包里的文件）。
 - **hickory 的 DoT 默认没有根证书**：不开 `webpki-roots` 特性，根证书库是空的，所有 TLS 上游都会失败。
 - **xterm.js 量父元素时把内边距也算进去**：Tailwind 的 preflight 让所有元素都是 `border-box`，`getComputedStyle().height` 于是包含内边距，FitAddon 多算出两行，终端伸出屏幕底下、获得焦点时把屏幕顶上去。边距放在外面一层（`components/Terminal.tsx`），屏幕用 `overflow: clip`，不能被滚动。
+- **xterm.js 6 留着一条原生滚动条**：它改用自己的滚动实现，样式表却仍给 `.xterm-viewport` 设了 `overflow-y: scroll`，Windows 上就一直画着一条原生滚动条，要 `scrollbar-width: none`。无头 Chrome 默认隐藏滚动条（`--hide-scrollbars`），截图里看不出来；检查滚动条时用 `ignoreDefaultArgs: ["--hide-scrollbars"]` 启动。
 - **xterm.js 6 自己涂背景**：底色不再画在 `.xterm-viewport` 上，而是以内联样式写在 `.xterm-scrollable-element` 上，要用 `!important` 去掉，显像管的渐变才透得出来。
 - **motion 的分属性过渡会整个替换默认过渡**：给某个属性单独写了 `transition`，外层的 `delay` 对它就不起作用了，延迟要写进每一个属性里。
