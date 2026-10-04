@@ -98,6 +98,7 @@ for (const [path, mode] of Object.entries(config.modes)) {
 }
 
 rootfs.write("/etc/hostname", `${config.hostname}\n`);
+rootfs.write("/etc/hosts", `127.0.0.1\tlocalhost ${config.hostname}\n::1\t\tlocalhost ${config.hostname}\n`);
 rootfs.write("/etc/alpine-release", `${alpine}\n`);
 rootfs.write(
   "/etc/os-release",
@@ -169,6 +170,7 @@ for (const name of await readdir(blobDir)) {
 
 const fsJson = JSON.stringify(json);
 await writeManifest({
+  hostname: config.hostname,
   arch: "i686",
   alpine,
   kernel: kernel.version,

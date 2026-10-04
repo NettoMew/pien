@@ -1,4 +1,4 @@
-//! guest@home's way onto the internet: Cloudflare WARP, spoken from the page.
+//! guest@zutto-issho's way onto the internet: Cloudflare WARP, spoken from the page.
 //!
 //! The guest's network card produces Ethernet frames; WARP's MASQUE endpoint
 //! takes IP packets as HTTP/2 capsules over TLS. This crate is the whole path

@@ -1,4 +1,4 @@
-# guest@home
+# guest@zutto-issho
 
 一台运行在浏览器里的、真正的 Linux，当作个人主页。Alpine 3.24 用户空间，自己编译的 6.18 内核，fish 4.6，跑在 [v86](https://github.com/copy/v86) 里。
 
@@ -32,6 +32,8 @@ npm run dev            # http://localhost:5173
 
 - 一份目录树，只有元数据；
 - 每个文件一个块，按内容哈希命名，客户机第一次读到时才下载。
+
+客户机里的 fish 是原装的：提示符、配色、补全都没改，只关掉了欢迎语。自带的脚本和 `md.awk` 也只按名字用颜色（`cyan`、`brblack`……），每种颜色长什么样，由终端的调色板（`src/theme.ts`）决定。主机名在 `image/image.config.ts`，`/etc/hostname`、`/etc/hosts` 和页面标题都从它来。
 
 **快照**（`scripts/build-state.ts`）。在 Node 里冷启动一次，先用一个一次性的会话把常用的东西预热进页缓存，再开一个全新会话、从第一个字节起录下终端输出。等它停在提示符时，整机存成快照，录下的输出另存。访客恢复快照后，页面回放这段输出，fish 已经在提示符等着了。
 
@@ -84,4 +86,3 @@ npm run dev            # http://localhost:5173
 - **busybox 的 wget 访问 https 要 `ssl_client`**：它是单独的包，没有它 wget 只会报 `can't execute 'ssl_client'`。
 - **mtr 要开原始套接字**：访客不是 root，所以 `mtr-packet` 设成 setuid（`image.config.ts` 的 `modes` 现在也作用于包里的文件）。
 - **hickory 的 DoT 默认没有根证书**：不开 `webpki-roots` 特性，根证书库是空的，所有 TLS 上游都会失败。
-- **欢迎语不能重排**：欢迎语是构建时录下、原样回放的，所以每行都控制在手机能放下的宽度。

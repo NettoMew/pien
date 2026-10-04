@@ -24,7 +24,7 @@ const call: Call = (path, init) =>
 switch (process.argv[2]) {
   case "register": {
     step("Registering an anonymous WARP device");
-    const device = await register(call, "guest@home dev");
+    const device = await register(call, "guest@zutto-issho dev");
     await mkdir(DIR, { recursive: true });
     await writeFile(DEVICE, JSON.stringify(device, null, 2));
     await writeFile(join(DIR, "open.bin"), openBytes(device));

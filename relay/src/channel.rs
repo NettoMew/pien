@@ -28,6 +28,8 @@ const NONCE: usize = 16;
 const POINT: usize = 65;
 pub const HELLO_LEN: usize = MAGIC.len() + NONCE + POINT;
 pub const REPLY_LEN: usize = NONCE + POINT;
+// The protocol keeps the name the machine had when it was written: these
+// labels go into every key, so changing them would turn every password away.
 const INFO: &[u8] = b"guest@home relay v1";
 pub const HELLO: &[u8] = b"hello";
 pub const WELCOME: &[u8] = b"welcome";

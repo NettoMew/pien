@@ -8,8 +8,8 @@ function help --description 'What this machine can do'
         'net on' 'go online: curl, ping, ssh, mtr'
 
     echo
-    set -l hl (set_color 4DE8FF)
-    set -l dim (set_color 7E8590)
+    set -l hl (set_color cyan)
+    set -l dim (set_color brblack)
     set -l n (set_color normal)
     for i in (seq 1 2 (count $rows))
         set -l about $rows[(math $i + 1)]
@@ -20,9 +20,8 @@ function help --description 'What this machine can do'
         end
     end
     echo
-    set_color 7E8590
-    echo '  Files download when first read:'
-    echo '  watch the line at the bottom.'
+    set_color brblack
+    echo '  Files download when first read.'
     echo '  It all lives in your browser:'
     echo '  break anything, reload to undo.'
     set_color normal

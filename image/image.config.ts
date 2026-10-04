@@ -30,5 +30,5 @@ export default {
   modes: { "/etc/shadow": 0o600, "/usr/sbin/mtr-packet": 0o4755 } as Record<string, number>,
 
   user: { uid: 1000, gid: 1000, home: "/home/guest" },
-  hostname: "home",
+  hostname: "zutto-issho",
 };

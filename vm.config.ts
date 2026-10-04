@@ -30,6 +30,7 @@ export const BLOBS = "fs/";
 
 /** What the builders produced (public/vm/manifest.json). Paths are relative to /vm/ and content-hashed. */
 export interface Manifest {
+  hostname: string;
   arch: string;
   alpine: string;
   kernel: string;

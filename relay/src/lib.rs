@@ -1,4 +1,4 @@
-//! guest@home's relay: a private Ethernet segment for each WebSocket, with a
+//! guest@zutto-issho's relay: a private Ethernet segment for each WebSocket, with a
 //! gateway onto the internet — what `net on` in the guest connects to.
 //!
 //! ```text

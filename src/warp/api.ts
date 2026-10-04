@@ -39,7 +39,7 @@ interface Registration {
   };
 }
 
-export async function register(call: Call, name = "guest@home"): Promise<Device> {
+export async function register(call: Call, name = "guest@zutto-issho"): Promise<Device> {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
   const spki = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
   const { d } = await crypto.subtle.exportKey("jwk", pair.privateKey);

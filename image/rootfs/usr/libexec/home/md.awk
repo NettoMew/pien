@@ -19,16 +19,16 @@ BEGIN {
 	RESET = ESC "[0m"
 	BOLD = ESC "[1m"; UNBOLD = ESC "[22m"
 	ITALIC = ESC "[3m"; UNITALIC = ESC "[23m"
-	TEXT = rgb(231, 233, 238); MUTED = rgb(126, 133, 144); FAINT = rgb(92, 99, 110)
-	CYAN = rgb(77, 232, 255); AMBER = rgb(255, 181, 71); CODE = rgb(201, 206, 214)
-	PANEL = ESC "[48;2;20;22;28m"
+	# The terminal's own palette, by name: it decides what each looks like.
+	TEXT = ESC "[39m"; MUTED = ESC "[90m"; CODE = ESC "[37m"
+	CYAN = ESC "[36m"; YELLOW = ESC "[33m"
+	PANEL = ESC "[40m"
 	HANG = "，。、；：！？」』）】》…,.;:!?)"
 	MARGIN = "  "
 	if (width < 20) width = 78
 	BASE = ESC "[39m"
 }
 
-function rgb(r, g, b) { return ESC "[38;2;" r ";" g ";" b "m" }
 function spaces(n,   s) { s = ""; while (n-- > 0) s = s " "; return s }
 function repeat(t, n,   s) { s = ""; while (n-- > 0) s = s t; return s }
 
@@ -94,7 +94,7 @@ function inline(s,   out, at, len) {
 	out = ""
 	while (match(s, /`[^`]+`/)) {
 		at = RSTART; len = RLENGTH
-		out = out links(substr(s, 1, at - 1)) AMBER substr(s, at + 1, len - 2) BASE
+		out = out links(substr(s, 1, at - 1)) YELLOW substr(s, at + 1, len - 2) BASE
 		s = substr(s, at + len)
 	}
 	return out links(s)
@@ -234,7 +234,7 @@ function heading(level, text) {
 function code(   i) {
 	gap("code")
 	PANELW = width - length(MARGIN)
-	print MARGIN PANEL spaces(PANELW - dwidth(lang) - 2) FAINT lang "  " RESET
+	print MARGIN PANEL spaces(PANELW - dwidth(lang) - 2) MUTED lang "  " RESET
 	for (i = 1; i <= ncode; i++) { gsub(/\t/, "    ", codeline[i]); panel(codeline[i]) }
 	print MARGIN PANEL spaces(PANELW) RESET
 	ncode = 0
@@ -247,7 +247,7 @@ function panel(s,   avail, i, n, k, ch, w, chunk, cw, lead) {
 		k = clen(substr(s, i, 1)); ch = substr(s, i, k); w = cwidth(ch)
 		if (cw + w > avail) {
 			print MARGIN PANEL lead CODE chunk spaces(PANELW - 2 - cw) RESET
-			lead = FAINT "↳ "; chunk = ""; cw = 0
+			lead = MUTED "↳ "; chunk = ""; cw = 0
 		}
 		chunk = chunk ch; cw += w
 	}
@@ -288,7 +288,7 @@ mode == "code" {
 
 /^#+ / { match($0, /^#+/); heading(RLENGTH, substr($0, RLENGTH + 2)); next }
 
-/^(---|\*\*\*|___) *$/ { flush(); gap("hr"); print MARGIN FAINT repeat("─", 40) RESET; next }
+/^(---|\*\*\*|___) *$/ { flush(); gap("hr"); print MARGIN MUTED repeat("─", 40) RESET; next }
 
 /^> ?/ {
 	if (block != "quote") flush()

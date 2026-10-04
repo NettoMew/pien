@@ -1,6 +1,6 @@
 function net --description 'The network: net on | net off | net login | net warp' --argument-names verb
-    set -l dim (set_color 7E8590)
-    set -l hl (set_color 4DE8FF)
+    set -l dim (set_color brblack)
+    set -l hl (set_color cyan)
     set -l n (set_color normal)
     read -l line </run/net/state
     set -l state (string split ' ' -- $line)
@@ -80,7 +80,7 @@ function __net_ask --argument-names verb
     printf '\e]7337;net;%s\a' $verb >&2
     set -l way relay
     test $verb = warp; and set way warp
-    echo (set_color 7E8590)'  Connecting through '(__net_name $way)' …'(set_color normal) >&2
+    echo (set_color brblack)'  Connecting through '(__net_name $way)' …'(set_color normal) >&2
     for i in (seq 300)
         read -l line </run/net/state
         if test "$line" != waiting
@@ -96,11 +96,11 @@ function __net_login
     read -l -s -P '  Relay password: ' password; or return 1
     test -n "$password"; or return 1
     printf '\e]7337;net;login;%s\a' (string escape --style=url -- $password)
-    echo (set_color 7E8590)'  Kept in this browser, as a key made from it.'(set_color normal)
+    echo (set_color brblack)'  Kept in this browser, as a key made from it.'(set_color normal)
 end
 
 function __net_consent
-    set -l dim (set_color 7E8590)
+    set -l dim (set_color brblack)
     set -l n (set_color normal)
     echo
     echo '  net warp puts this machine on'
@@ -124,8 +124,8 @@ function __net_consent
 end
 
 function __net_up --argument-names way address
-    set -l dim (set_color 7E8590)
-    set -l hl (set_color 4DE8FF)
+    set -l dim (set_color brblack)
+    set -l hl (set_color cyan)
     set -l n (set_color normal)
     echo '  '$hl'Online'$n' through '(__net_name $way)', at '$address
     # Ask Cloudflare which way out this took.
@@ -173,5 +173,5 @@ function __net_why
             set why 'The saved device is broken: net forget, then try again.'
     end
     echo '  '$why >&2
-    echo (set_color 7E8590)'  Offline, there is still: blog · help'(set_color normal) >&2
+    echo (set_color brblack)'  Offline, there is still: blog · help'(set_color normal) >&2
 end

@@ -18,6 +18,7 @@ const CLOSED: Record<number, string> = { 1008: "badkey", 1013: "busy", 4001: "qu
 const subtle = crypto.subtle;
 const text = (s: string) => new TextEncoder().encode(s);
 const MAGIC = text("GHR1");
+// The machine's old name, kept: it is part of every key (relay/src/channel.rs).
 const INFO = text("guest@home relay v1");
 const HELLO = "hello";
 const WELCOME = "welcome";

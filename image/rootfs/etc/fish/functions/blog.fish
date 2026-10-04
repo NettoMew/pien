@@ -8,8 +8,8 @@ function blog --description 'List the posts'
         set -a titles $title
     end < /usr/share/home/posts
 
-    set -l dim (set_color 7E8590)
-    set -l hl (set_color 4DE8FF)
+    set -l dim (set_color brblack)
+    set -l hl (set_color cyan)
     set -l n (set_color normal)
     set -l column (math (string length -- $files | sort -n | tail -n1) + 3)
 
