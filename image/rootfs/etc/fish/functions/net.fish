@@ -33,6 +33,13 @@ function net --description 'The network: net on | net off | net login | net warp
             end
         case off
             printf '\e]7337;net;off\a'
+            # hostd takes the address away a moment later; wait for it, so
+            # that whatever runs next finds the network gone.
+            for i in (seq 25)
+                read line </run/net/state
+                string match -q 'up *' -- $line; or break
+                sleep 0.2
+            end
             echo $dim'  Off.'$n
         case login
             __net_login
