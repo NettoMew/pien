@@ -1,7 +1,9 @@
 #!/bin/sh
 # Control line on ttyS1. The page sends one message per line:
 #
-#   attach <epoch>   a browser is here: set the clock, start the session
+#   attach <epoch> [zone]
+#                    a browser is here: its clock and time zone; start the session
+#   clock <epoch>    the browser's clock again, now and then: follow it
 #   detach           (image build only) rewind to "waiting for a browser"
 #   net up <way> <address/prefix> <gateway> <dns> <mtu>
 #                    a way out is up (src/net/): put eth0 on it
@@ -11,14 +13,31 @@
 #
 # Window sizes need no message: the virtio console reports them itself.
 
+# The browser's time zone, if it is a name tzdata knows.
+zone() {
+	case $1 in
+	"" | *[!A-Za-z0-9_+/-]* | *..*) return ;;
+	esac
+	[ -f "/usr/share/zoneinfo/$1" ] || return
+	ln -sf "/usr/share/zoneinfo/$1" /etc/localtime
+	echo "$1" > /etc/timezone
+}
+
 stty -echo
 echo ready
 
 while read -r cmd arg; do
 	case $cmd in
 	attach)
-		date -s "@$arg" > /dev/null
+		set -- $arg
+		date -s "@$1" > /dev/null
+		zone "$2"
 		touch /run/attached
+		;;
+	clock)
+		now=$(date +%s)
+		drift=$((arg - now))
+		[ "${drift#-}" -gt 1 ] && date -s "@$arg" > /dev/null
 		;;
 	detach)
 		rm -f /run/attached

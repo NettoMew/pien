@@ -123,7 +123,7 @@ function __net_up --argument-names way address
     set -l ip (string replace -rf '^ip=' '' -- $trace)
     set -l colo (string replace -rf '^colo=' '' -- $trace)
     set -q ip[1]; and echo '  出口 '$ip' · 节点 '$colo
-    echo $dim'  试试 curl wttr.in/?0 · ping 1.1.1.1 · ip a'$n
+    echo $dim'  试试 curl wttr.in/?0 · ping 1.1.1.1 · ssh 用户@主机'$n
 end
 
 function __net_why

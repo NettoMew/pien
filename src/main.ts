@@ -98,12 +98,16 @@ term.onData((data) => machine.write(data));
 term.onBinary((data) => machine.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
 term.onResize(({ cols, rows }) => machine.resize(cols, rows));
 
-// Sets the guest's clock (and, on a cold boot, starts the session); tells it
-// whether this browser already has a WARP device.
+// Sets the guest's clock and time zone to the browser's (and, on a cold boot,
+// starts the session); tells it whether this browser already has a WARP device.
 const greet = () => {
-  machine.attach();
+  machine.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
   if (known()) machine.control("net known");
 };
+
+// An emulated clock drifts, and stops while the tab sleeps: keep it honest.
+setInterval(() => machine.clock(), 60_000);
+document.addEventListener("visibilitychange", () => document.hidden || machine.clock());
 
 // A cold-booted guest starts its control line after we got here; greet it again then.
 machine.onControl((line) => line === "ready" && greet());

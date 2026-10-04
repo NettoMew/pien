@@ -57,9 +57,10 @@ for (const spec of args.put) {
   const [local, remote] = spec.split("=") as [string, string];
   await machine.emulator.create_file(remote, new Uint8Array(await readFile(local)));
 }
-machine.onControl((line) => line === "ready" && machine.attach());
+const zone = Intl.DateTimeFormat().resolvedOptions().timeZone; // as the page does
+machine.onControl((line) => line === "ready" && machine.attach(zone));
 machine.resize(process.stdout.columns || 100, process.stdout.rows || 30);
-machine.attach();
+machine.attach(zone);
 
 // Restored, fish already sits at its prompt (and redraws it for the new size);
 // cold, it has yet to start. Either way, wait for the dust to settle.

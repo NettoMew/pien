@@ -7,7 +7,7 @@ export default {
   arch: "x86",
   repos: ["main", "community"],
 
-  packages: ["busybox", "busybox-binsh", "fish", "fastfetch", "htop", "tree", "curl"],
+  packages: ["busybox", "busybox-binsh", "fish", "fastfetch", "htop", "tree", "curl", "ssl_client", "openssh-client-default", "mtr", "tzdata"],
 
   // fish wants the full terminfo database; the common entries are plenty.
   replace: { "ncurses-terminfo": "ncurses-terminfo-base" },
@@ -26,7 +26,8 @@ export default {
     "/usr/share/udhcpc",
   ],
 
-  modes: { "/etc/shadow": 0o600 } as Record<string, number>,
+  // mtr-packet opens raw sockets: setuid, as on any distribution without file capabilities.
+  modes: { "/etc/shadow": 0o600, "/usr/sbin/mtr-packet": 0o4755 } as Record<string, number>,
 
   user: { uid: 1000, gid: 1000, home: "/home/guest" },
   hostname: "home",

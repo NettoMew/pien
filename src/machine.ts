@@ -70,8 +70,16 @@ export class Machine {
     this.emulator.serial_send_bytes(1, this.encoder.encode(`${line}\n`));
   }
 
-  /** Tells the guest a visitor is here: sets its clock and starts the login session. */
-  attach(): void {
-    this.control(`attach ${Math.floor(Date.now() / 1000)}`);
+  /**
+   * Tells the guest a visitor is here: sets its clock (and time zone, an IANA
+   * name such as Asia/Shanghai) and starts the login session.
+   */
+  attach(zone?: string): void {
+    this.control(`attach ${Math.floor(Date.now() / 1000)}${zone ? ` ${zone}` : ""}`);
+  }
+
+  /** The browser's clock again: the guest follows it if it has drifted. */
+  clock(): void {
+    this.control(`clock ${Math.floor(Date.now() / 1000)}`);
   }
 }

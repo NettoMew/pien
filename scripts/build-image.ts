@@ -90,6 +90,12 @@ for await (const path of walk(overlay)) {
   const data = await unix(path);
   rootfs.write(target, data, { mode: config.modes[target] ?? (data.startsWith("#!") ? 0o755 : 0o644) });
 }
+// The packages' files take their modes from config too.
+for (const [path, mode] of Object.entries(config.modes)) {
+  const node = rootfs.get(path);
+  if (!node) throw new Error(`image.config.ts modes: ${path} is not in the image`);
+  node.mode = mode;
+}
 
 rootfs.write("/etc/hostname", `${config.hostname}\n`);
 rootfs.write("/etc/alpine-release", `${alpine}\n`);

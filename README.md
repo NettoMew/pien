@@ -35,7 +35,7 @@ npm run dev            # http://localhost:5173
 
 **快照**（`scripts/build-state.ts`）。在 Node 里冷启动一次，先用一个一次性的会话把常用的东西预热进页缓存，再开一个全新会话、从第一个字节起录下终端输出。等它停在提示符时，整机存成快照，录下的输出另存。访客恢复快照后，页面回放这段输出，fish 已经在提示符等着了。
 
-**页面**（`src/`）。xterm.js 渲染终端。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时校时、启动会话），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。底部状态栏通过浏览器的资源计时，实时显示每一次按需加载。触屏设备上多一排快捷键：Tab、↑、Ctrl-C 和几个常用命令。
+**页面**（`src/`）。xterm.js 渲染终端。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。底部状态栏通过浏览器的资源计时，实时显示每一次按需加载。触屏设备上多一排快捷键：Tab、↑、Ctrl-C 和几个常用命令。
 
 **联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。另一条路 `net warp` 用浏览器里的 Rust/wasm 客户端直连 Cloudflare WARP（试验，[docs/warp.md](docs/warp.md)）。
 
@@ -81,5 +81,7 @@ npm run dev            # http://localhost:5173
 - **wasm 里的 rustls**：rustls 的 `std` 特性要读系统时钟，`wasm32-unknown-unknown` 上没有；所以关掉 `std`，改用它的 unbuffered API，时间由页面传进去。
 - **在这台开发机上连不上 WARP 入口**：TCP 能连，TLS 一看到 `consumer-masque` 这个 SNI 就被复位。本地开发用 `WARP_EDGE` 走 SSH 转发。
 - **命令替换会吞掉转义序列**：fish 的 `set x (f)` 捕获 `f` 的标准输出，`f` 里 printf 的 OSC 就到不了终端。要发给页面的序列写到 stderr。
+- **busybox 的 wget 访问 https 要 `ssl_client`**：它是单独的包，没有它 wget 只会报 `can't execute 'ssl_client'`。
+- **mtr 要开原始套接字**：访客不是 root，所以 `mtr-packet` 设成 setuid（`image.config.ts` 的 `modes` 现在也作用于包里的文件）。
 - **hickory 的 DoT 默认没有根证书**：不开 `webpki-roots` 特性，根证书库是空的，所有 TLS 上游都会失败。
 - **欢迎语不能重排**：欢迎语是构建时录下、原样回放的，所以每行都控制在手机能放下的宽度。
