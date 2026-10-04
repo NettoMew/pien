@@ -100,11 +100,19 @@ export function Boot({ onDone }: { onDone: () => void }) {
 
 /** What the machine is, then how far along its memory is. */
 function Report() {
-  const { phase, progress, missing } = useMachine();
+  const { machine, phase, progress, problem } = useMachine();
+  const tools = machine === "workbench" ? manifest.workbench?.versions : undefined;
   const facts: [string, ReactNode][] = [
     ["Kernel", `Linux ${manifest.kernel} · Alpine ${manifest.alpine}`],
-    ["Memory", `${usableMemoryMB} MB`],
-    ["Disk", "9p over HTTP, read on demand"],
+    ["Memory", `${usableMemoryMB(machine)} MB`],
+    ["Disk", tools ? "9p, and a disk of toolchains" : "9p over HTTP, read on demand"],
+    ...((tools
+      ? [
+          ["Compilers", `gcc ${tools.gcc} · clang ${tools.clang} · rust ${tools.rust}`],
+          ["Runtimes", `go ${tools.go} · python ${tools.python} · node ${tools.node}`],
+          ["Editor", `neovim ${tools.neovim} · LazyVim`],
+        ]
+      : []) as [string, ReactNode][]),
     [
       "Network",
       <>
@@ -130,7 +138,7 @@ function Report() {
       <m.li variants={line} className="h-[1.3em]" />
       {facts.map(([label, value]) => (
         <m.li key={label} variants={line} className="ps-[2ch]">
-          <span className="inline-block w-[10ch] text-faint">{label}</span>
+          <span className="inline-block w-[11ch] text-faint">{label}</span>
           {value}
         </m.li>
       ))}
@@ -140,9 +148,9 @@ function Report() {
         <Meter value={progress} />
         {phase === "running" && <span className="text-green">OK</span>}
       </m.li>
-      {missing && (
+      {problem && (
         <m.li variants={line} className="ps-[2ch] text-red">
-          Could not load {missing}. Try reloading.
+          {problem}
         </m.li>
       )}
     </m.ol>

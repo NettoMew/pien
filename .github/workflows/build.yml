@@ -1,5 +1,6 @@
-# Builds the whole site from scratch — WARP client, kernel, image, snapshot, page — checks
-# it in a real browser, and hands the result over as the "site" artifact,
+# Builds the whole site from scratch — WARP client, kernel, image, the
+# workbench's toolchain disk, snapshots, page — checks it in a real browser,
+# and hands the result over as the "site" artifact,
 # ready for any static host (public/_headers sets the cache rules).
 
 name: build
@@ -23,11 +24,11 @@ jobs:
 
       - run: npm ci
 
-      # Downloads (Alpine packages, BIOS) and the kernel are keyed by content.
+      # Downloads (Alpine packages, BIOS), the kernel and the toolchain disk are keyed by content.
       - uses: actions/cache@v4
         with:
           path: .cache
-          key: cache-${{ hashFiles('image/kernel/**', 'image/image.config.ts') }}
+          key: cache-${{ hashFiles('image/kernel/**', 'image/image.config.ts', 'image/workbench/**') }}
           restore-keys: cache-
 
       # The network relay (relay/, Rust): a smoltcp guest end to end through it.
@@ -39,7 +40,7 @@ jobs:
       - run: npm run build:warp
 
       - run: npm run build:kernel
-      - run: npm run build:vm
+      - run: npm run build:vm # the toolchain disk is built with this runner's Docker
       - run: npm run lint
       - run: npm run build # type-checks first
 

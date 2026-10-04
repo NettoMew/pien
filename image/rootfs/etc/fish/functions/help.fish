@@ -6,6 +6,13 @@ function help --description 'What this machine can do'
         'open post.md' 'read it as a web page' \
         'fastfetch  htop' 'look at this machine' \
         'net on' 'go online: curl, ping, ssh, mtr'
+    if __on_workbench
+        set -a rows \
+            nvim 'the editor, set up for every language here' \
+            home 'back to the small machine'
+    else
+        set -a rows workbench 'compilers, nvim, adb: a bigger machine'
+    end
 
     echo
     set -l hl (set_color cyan)

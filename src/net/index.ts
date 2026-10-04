@@ -29,7 +29,8 @@ export function known(): boolean {
   }
 }
 
-let wired = false;
+/** The machine whose network card is wired to `active`. */
+let wired: Machine | undefined;
 let active: Way | undefined;
 let relay: Promise<typeof import("./relay.ts")> | undefined;
 let warp: Promise<typeof import("../warp/session.ts")> | undefined;
@@ -48,9 +49,9 @@ export function net(verb: string, argument: string, machine: Machine) {
 }
 
 async function handle(verb: string, argument: string, machine: Machine) {
-  if (!wired) {
-    machine.onFrame((frame) => active?.frame(frame));
-    wired = true;
+  if (wired !== machine) {
+    machine.onFrame((frame) => wired === machine && active?.frame(frame));
+    wired = machine;
   }
   relay ??= import("./relay.ts");
   switch (verb) {
@@ -74,6 +75,14 @@ async function handle(verb: string, argument: string, machine: Machine) {
       return forget(machine);
     }
   }
+}
+
+/** Lets go of the machine that is going away, its ways out with it. */
+export function unwire() {
+  active?.disconnect(true);
+  active = undefined;
+  ways.clear();
+  wired = undefined;
 }
 
 /** Makes `name` the way out, making it first if need be; the one before steps aside quietly. */

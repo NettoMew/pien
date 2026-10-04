@@ -11,6 +11,19 @@ ln -sf /proc/self/fd /dev/fd
 
 hostname -F /etc/hostname
 
+# The workbench's toolchain disk, when the machine has one (docs/workbench.md):
+# a read-only squashfs whose every top-level directory is laid over the one it
+# was installed into, with whatever is written there kept in memory.
+if [ -b /dev/sda ]; then
+	mkdir -p /run/toolchain
+	mount -t squashfs -o ro /dev/sda /run/toolchain
+	for lower in /run/toolchain/*/; do
+		dir=$(basename "$lower")
+		mkdir -p "/run/overlay/$dir/upper" "/run/overlay/$dir/work"
+		mount -t overlay -o "lowerdir=$lower:/$dir,upperdir=/run/overlay/$dir/upper,workdir=/run/overlay/$dir/work" overlay "/$dir"
+	done
+fi
+
 # The network: loopback now, eth0 once a visitor types `net warp` (see hostd).
 # The state file is the guest's to mark "waiting" in; hostd writes the rest.
 ip link set lo up

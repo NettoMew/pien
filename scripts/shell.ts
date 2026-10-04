@@ -8,12 +8,14 @@
 //                                       drop a local file into the guest first, to try changes
 //                                       without rebuilding the image
 //   npm run shell -- --cold             boot the kernel instead of restoring the snapshot
+//   npm run shell -- --machine workbench
+//                                       the workbench rather than the home machine
 
 import { readFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { Machine } from "../src/machine.ts";
-import { v86Options } from "../vm.config.ts";
+import { type MachineName, machines, v86Options } from "../vm.config.ts";
 import { readManifest, VM } from "./lib/manifest.ts";
 
 const { values: args } = parseArgs({
@@ -22,14 +24,17 @@ const { values: args } = parseArgs({
     put: { type: "string", multiple: true, default: [] },
     trace: { type: "boolean" },
     cold: { type: "boolean" },
+    machine: { type: "string", default: "home" },
   },
 });
+if (!(args.machine in machines)) throw new Error(`no machine called ${args.machine}; there is ${Object.keys(machines).join(" and ")}`);
+const name = args.machine as MachineName;
 
 const ROOT = join(import.meta.dirname, "..");
 const at = (file: string) => join(VM, file).split(sep).join("/") + (file.endsWith("/") ? "/" : "");
-const { files } = await readManifest();
+const manifest = await readManifest();
 const machine = new Machine({
-  ...v86Options(at, files, { cold: args.cold }),
+  ...v86Options(at, manifest, name, { cold: args.cold }),
   wasm_path: join(ROOT, "node_modules/v86/build/v86.wasm"),
 });
 
@@ -86,7 +91,8 @@ if (args.command !== undefined) {
   if (args.trace) console.log(`\n9p reads: ${reads.join(" ")}`);
   process.exit(0);
 } else {
-  if (!args.cold && files.screen) process.stdout.write(await readFile(join(VM, files.screen)));
+  const screen = manifest.snapshots[name]?.screen;
+  if (!args.cold && screen) process.stdout.write(await readFile(join(VM, screen)));
   listeners.push((bytes) => process.stdout.write(bytes));
   machine.resize(process.stdout.columns, process.stdout.rows);
   process.stdin.setRawMode(true);

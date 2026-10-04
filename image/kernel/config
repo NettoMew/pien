@@ -69,3 +69,19 @@ CONFIG_INET=y
 CONFIG_NETDEVICES=y
 CONFIG_NET_CORE=y
 CONFIG_VIRTIO_NET=y
+
+# The workbench's toolchain disk (docs/workbench.md): a read-only squashfs on
+# v86's IDE controller, an Intel PIIX3, its top-level directories laid over
+# the guest's with overlayfs, whose upper layer in tmpfs needs xattrs
+CONFIG_TMPFS_XATTR=y
+CONFIG_BLOCK=y
+CONFIG_SCSI=y
+CONFIG_BLK_DEV_SD=y
+CONFIG_ATA=y
+CONFIG_ATA_SFF=y
+CONFIG_ATA_BMDMA=y
+CONFIG_ATA_PIIX=y
+CONFIG_MISC_FILESYSTEMS=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_ZSTD=y
+CONFIG_OVERLAY_FS=y

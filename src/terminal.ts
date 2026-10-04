@@ -1,6 +1,7 @@
 // The terminal, one per page like the machine behind it (session.ts). React
 // only gives it a place on the screen: components/Terminal.tsx.
 
+import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -46,6 +47,19 @@ term.loadAddon(fit);
 term.loadAddon(new Unicode11Addon());
 term.unicode.activeVersion = "11"; // CJK and emoji take two cells
 term.loadAddon(new WebLinksAddon((_, url) => openLink(url)));
+
+/**
+ * OSC 52: the guest may put text on the visitor's clipboard (Neovim's yanks,
+ * say), and never read it, so whatever was copied elsewhere stays theirs.
+ * Pasting is the browser's own: Ctrl+Shift+V, or a long press.
+ */
+const clipboard: IClipboardProvider = {
+  readText: () => "",
+  writeText: (selection, text) => {
+    if (String(selection) === "c") return navigator.clipboard.writeText(text).catch(() => {});
+  },
+};
+term.loadAddon(new ClipboardAddon(undefined, clipboard));
 
 compact.addEventListener("change", () => {
   term.options.fontSize = fontSize();

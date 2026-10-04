@@ -179,8 +179,11 @@ await writeManifest({
   alpine,
   kernel: kernel.version,
   fish: release(repo.lookup("fish").version),
-  // The snapshot no longer matches this image; build-state adds a new one.
+  // Exactly what went in: the workbench's disk is built against these.
+  packages: Object.fromEntries(packages.map((pkg) => [pkg.name, pkg.version]).sort(([a], [b]) => a!.localeCompare(b!))),
   files: { fsJson: await putHashed("fs.json", Buffer.from(fsJson)), bios: biosFile, vgaBios: vgaBiosFile, kernel: kernelFile },
+  // Neither the disk nor the snapshots match a new image; their builders add new ones.
+  snapshots: {},
 });
 
 info(

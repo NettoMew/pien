@@ -1,81 +1,131 @@
-// The machine behind the terminal, one per page. It starts loading the moment
-// the page does; whatever draws it watches it come up through the store.
+// The machine behind the terminal, one at a time. The first starts loading
+// the moment the page does; after that the guest's `workbench` and `home` ask
+// for the other one, and the screen powers down and up around the switch
+// (App.tsx). Whatever draws it watches it come up through the store.
 
 import wasm from "v86/build/v86.wasm?url";
 import manifest from "virtual:vm-manifest";
-import { v86Options } from "../vm.config.ts";
+import { type MachineName, machines, v86Options } from "../vm.config.ts";
 import { Machine } from "./machine.ts";
-import { known, net } from "./net/index.ts";
+import { known, net, unwire as unwireNet } from "./net/index.ts";
 import { useMachine } from "./store.ts";
 import { opened, openLink, term } from "./terminal.ts";
 
 const vm = (file: string) => `${import.meta.env.BASE_URL}vm/${file}`;
-const { files } = manifest;
+const params = new URLSearchParams(location.search);
 
-/** `?cold` boots the kernel instead of resuming the snapshot. */
-export const cold = new URLSearchParams(location.search).has("cold");
+/** `?cold` boots the kernel instead of resuming a snapshot. */
+export const cold = params.has("cold");
 
-export const machine = new Machine({ ...v86Options(vm, files, { cold }), wasm_path: wasm });
-const screen = cold || !files.screen ? null : fetch(vm(files.screen)).then((res) => res.arrayBuffer());
+/** The machine on screen; input reaches it once its screen is back (live). */
+let machine: Machine | undefined;
+let live = false;
 
-// How much has arrived, across every file the machine asked for. Behind a
-// compressing server the browser may count decoded bytes against an encoded
-// total, so the ratio is clamped rather than trusted.
-const downloads = new Map<string, { loaded: number; total: number }>();
-machine.emulator.add_listener("download-progress", ({ file_name, loaded, total }) => {
-  downloads.set(file_name, { loaded, total });
-  let done = 0;
-  let all = 0;
-  for (const file of downloads.values()) {
-    done += file.loaded;
-    all += file.total;
-  }
-  useMachine.setState({ progress: all ? Math.min(1, done / all) : 0 });
-});
-machine.emulator.add_listener("download-error", ({ file_name }) =>
-  useMachine.setState({ phase: "failed", missing: file_name }),
-);
+// The terminal is wired once and speaks to whichever machine is live.
+term.onData((data) => live && machine?.write(data));
+term.onBinary((data) => live && machine?.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
+term.onResize(({ cols, rows }) => live && machine?.resize(cols, rows));
 
-// The guest's `open` and `net` print a private escape sequence; see open.fish, net.fish.
+// The guest's `open`, `net` and `workbench`/`home` print a private escape
+// sequence; see open.fish, net.fish and workbench.fish.
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
-  if (verb === "net") void net(rest[0] ?? "", rest.slice(1).join(";"), machine);
+  if (verb === "net" && machine) void net(rest[0] ?? "", rest.slice(1).join(";"), machine);
+  if (verb === "machine" && (rest[0] === "home" || rest[0] === "workbench") && rest[0] !== useMachine.getState().machine) {
+    useMachine.setState({ next: rest[0] });
+  }
   return true;
 });
 
-// Sets the guest's clock and time zone to the browser's (and, on a cold boot,
-// starts the session); tells it whether this browser already has a WARP device.
-const greet = () => {
-  machine.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
-  if (known()) machine.control("net known");
-};
-
 // An emulated clock drifts, and stops while the tab sleeps: keep it honest.
-setInterval(() => machine.clock(), 60_000);
-document.addEventListener("visibilitychange", () => document.hidden || machine.clock());
+setInterval(() => live && machine?.clock(), 60_000);
+document.addEventListener("visibilitychange", () => document.hidden || (live && machine?.clock()));
 
-// A cold-booted guest starts its control line after we got here; greet it again then.
-machine.onControl((line) => line === "ready" && greet());
+/** Starts the machine `name`: from its snapshot, or from the kernel up with ?cold. */
+export function start(name: MachineName) {
+  useMachine.setState({ machine: name, phase: "loading", progress: 0, problem: undefined, next: undefined });
+  remember(name);
 
-// The snapshot was taken with fish already at its prompt, so put back what its
-// terminal showed. Input is wired only afterwards: the recording holds fish's
-// startup queries, whose answers it already got when the recording was made.
-async function resume() {
-  await Promise.all([machine.loaded(), opened]);
+  let started: Machine;
+  try {
+    started = new Machine({ ...v86Options(vm, manifest, name, { cold }), wasm_path: wasm });
+  } catch (error) {
+    // Most likely the memory: the workbench asks the browser for all of its at once.
+    const problem = error instanceof RangeError ? `Not enough memory here for the ${name}: it needs ${machines[name].memoryMB} MB.` : String(error);
+    useMachine.setState({ phase: "failed", problem });
+    return;
+  }
+  machine = started;
+  void resume(started, name);
+}
+
+/** Keeps the machine in the address (?workbench), so a reload comes back to it. */
+function remember(name: MachineName) {
+  const others = new URLSearchParams(location.search);
+  others.delete("workbench");
+  const query = [name === "workbench" ? "workbench" : "", others.toString()].filter(Boolean).join("&");
+  history.replaceState(history.state, "", `${location.pathname}${query && `?${query}`}${location.hash}`);
+}
+
+/** Powers the machine down and clears the screen, ready for the next. */
+export async function stop() {
+  const stopping = machine;
+  machine = undefined;
+  live = false;
+  unwireNet();
+  term.reset();
+  await stopping?.emulator.destroy();
+}
+
+async function resume(started: Machine, name: MachineName) {
+  const snapshot = manifest.snapshots[name];
+  const screen = cold || !snapshot ? null : fetch(vm(snapshot.screen)).then((res) => res.arrayBuffer());
+
+  // How much has arrived, across every file the machine asked for. Behind a
+  // compressing server the browser may count decoded bytes against an
+  // encoded total, so the ratio is clamped rather than trusted.
+  const downloads = new Map<string, { loaded: number; total: number }>();
+  started.emulator.add_listener("download-progress", ({ file_name, loaded, total }) => {
+    downloads.set(file_name, { loaded, total });
+    let done = 0;
+    let all = 0;
+    for (const file of downloads.values()) {
+      done += file.loaded;
+      all += file.total;
+    }
+    useMachine.setState({ progress: all ? Math.min(1, done / all) : 0 });
+  });
+  started.emulator.add_listener("download-error", ({ file_name }) =>
+    useMachine.setState({ phase: "failed", problem: `Could not load ${file_name}. Try reloading.` }),
+  );
+
+  // Sets the guest's clock and time zone to the browser's (and, on a cold
+  // boot, starts the session); tells it whether this browser already has a
+  // WARP device. A cold-booted guest opens its control line after we got
+  // here, and says so: it is greeted again then.
+  const greet = () => {
+    started.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    if (known()) started.control("net known");
+  };
+  started.onControl((line) => line === "ready" && greet());
+
+  // The snapshot was taken with fish already at its prompt, so put back what
+  // its terminal showed. Input is wired only afterwards: the recording holds
+  // fish's startup queries, whose answers it already got when it was made.
+  await Promise.all([started.loaded(), opened]);
+  if (machine !== started) return; // switched away while it loaded
   if (screen) {
     const recorded = new Uint8Array(await screen);
     await new Promise<void>((done) => term.write(recorded, done));
   }
-  machine.onOutput((bytes) => term.write(bytes));
-  term.onData((data) => machine.write(data));
-  term.onBinary((data) => machine.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
-  term.onResize(({ cols, rows }) => machine.resize(cols, rows));
-  machine.resize(term.cols, term.rows); // fish redraws its prompt to fit
+  started.onOutput((bytes) => machine === started && term.write(bytes));
+  live = true;
+  started.resize(term.cols, term.rows); // fish redraws its prompt to fit
   greet();
   useMachine.setState({ phase: "running" });
 }
 
-void resume();
+start(params.has("workbench") ? "workbench" : "home");
 
-if (import.meta.env.DEV) Object.assign(globalThis, { term, machine });
+if (import.meta.env.DEV) Object.assign(globalThis, { term, machine: () => machine });

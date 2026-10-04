@@ -31,4 +31,40 @@ export default {
 
   user: { uid: 1000, gid: 1000, home: "/home/guest" },
   hostname: "zutto-issho",
+
+  // The workbench's second disk (docs/workbench.md): compilers, runtimes,
+  // language servers, a configured Neovim and Android's tools, built by
+  // scripts/build-workbench.ts and laid over /usr when the disk is attached.
+  // What apk cannot provide comes from each language's own installer, pinned.
+  workbench: {
+    packages: [
+      // C and C++
+      "build-base", "clang", "clang-extra-tools", "lld", "lldb", "cmake", "samurai", "meson", "pkgconf", "gdb", "valgrind", "strace", "ltrace",
+      // Rust
+      "rust", "cargo", "rust-src", "rust-analyzer", "rustfmt", "rust-clippy",
+      // Go
+      "go", "gopls", "delve", "golangci-lint",
+      // Python
+      "python3", "python3-dev", "py3-pip", "ruff",
+      // JavaScript
+      "nodejs", "npm",
+      // The editor, and what a day of programming reaches for
+      "neovim", "tree-sitter-cli", "lua-language-server", "stylua", "shfmt", "taplo",
+      "git", "tig", "lazygit", "ripgrep", "fd", "fzf", "tmux", "bash", "less", "file", "jq", "yq-go", "sqlite",
+      "zip", "unzip", "xz", "zstd", "tar", "openssl",
+      // Android
+      "android-tools", "socat",
+    ],
+    npm: [
+      "pyright@1.1.414",
+      "@vtsls/language-server@0.3.0",
+      "vscode-langservers-extracted@4.10.0",
+      "yaml-language-server@1.24.0",
+      "bash-language-server@5.8.1",
+      "prettier@3.9.9",
+      "markdownlint-cli2@0.23.3",
+    ],
+    go: ["golang.org/x/tools/cmd/goimports@v0.51.0", "mvdan.cc/gofumpt@v0.12.0"],
+    pip: ["debugpy==1.8.22"],
+  },
 };

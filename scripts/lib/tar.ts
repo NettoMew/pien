@@ -91,3 +91,31 @@ export function* readTar(buf: Buffer): Generator<TarEntry> {
     longName = longLink = null;
   }
 }
+
+/**
+ * A minimal ustar writer for regular files (names of up to 100 bytes; their
+ * directories are implied). Every entry has the same owner and time, so the
+ * same files always make the same archive.
+ */
+export function writeTar(files: { name: string; data: Buffer; mode?: number }[]): Buffer {
+  const blocks: Buffer[] = [];
+  const field = (header: Buffer, value: number, off: number, len: number) =>
+    header.write(`${value.toString(8).padStart(len - 1, "0")}\0`, off, len, "ascii");
+  for (const { name, data, mode = 0o644 } of files) {
+    if (Buffer.byteLength(name) > 100) throw new Error(`tar: name too long: ${name}`);
+    const header = Buffer.alloc(BLOCK);
+    header.write(name, 0, 100);
+    field(header, mode, 100, 8);
+    field(header, 0, 108, 8); // uid
+    field(header, 0, 116, 8); // gid
+    field(header, data.length, 124, 12);
+    field(header, 0, 136, 12); // mtime
+    header.write(" ".repeat(8), 148, 8, "ascii"); // the checksum counts itself as spaces
+    header.write("0", 156, 1, "ascii");
+    header.write("ustar\0" + "00", 257, 8, "ascii");
+    header.write(`${header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+    blocks.push(header, data, Buffer.alloc((BLOCK - (data.length % BLOCK)) % BLOCK));
+  }
+  blocks.push(Buffer.alloc(2 * BLOCK));
+  return Buffer.concat(blocks);
+}
