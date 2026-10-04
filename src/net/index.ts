@@ -56,11 +56,11 @@ async function handle(verb: string, argument: string, machine: Machine) {
   switch (verb) {
     case "on": {
       const { Relay } = await relay;
-      return use("relay", () => new Relay(machine));
+      return through("relay", () => new Relay(machine));
     }
     case "warp": {
       const { Warp } = await (warp ??= import("../warp/session.ts"));
-      return use("warp", () => new Warp(machine));
+      return through("warp", () => new Warp(machine));
     }
     case "off":
       return active?.disconnect();
@@ -76,7 +76,8 @@ async function handle(verb: string, argument: string, machine: Machine) {
   }
 }
 
-async function use(name: string, make: () => Way) {
+/** Makes `name` the way out, making it first if need be; the one before steps aside quietly. */
+async function through(name: string, make: () => Way) {
   const way = ways.get(name) ?? make();
   ways.set(name, way);
   if (active && active !== way) active.disconnect(true);

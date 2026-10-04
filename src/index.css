@@ -1,0 +1,105 @@
+@import "tailwindcss" source(".");
+@import "@xterm/xterm/css/xterm.css";
+@import "@fontsource/monaspace-neon/400.css";
+@import "@fontsource/monaspace-neon/600.css";
+
+/* Grok Night (src/theme.ts) by role. The values themselves arrive as --term-*
+   custom properties in the page's head (vite.config.ts). */
+@theme {
+  --color-*: initial;
+  --color-black: var(--term-black);
+  --color-screen: var(--term-background);
+  --color-ink: var(--term-foreground);
+  --color-faint: var(--term-bright-black);
+  --color-line: var(--term-selection-background);
+  --color-red: var(--term-red);
+  --color-green: var(--term-green);
+  --color-yellow: var(--term-yellow);
+  --color-cyan: var(--term-cyan);
+
+  --font-*: initial;
+  --font-mono: "Monaspace Neon", ui-monospace, monospace;
+}
+
+/* Nerd Font icons (fonts/NOTICE): a font of their own, which the browser
+   fetches only when the terminal shows one of these code points. */
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("./fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+23FB-23FE, U+2B58, U+E000-F8FF, U+F0000-FFFFD;
+}
+
+@layer base {
+  body {
+    @apply bg-black text-ink antialiased;
+  }
+}
+
+/* From the tube's edge to the first column of text, for whatever is on screen. */
+@utility gutter {
+  padding-inline: clamp(14px, 3.2vw, 44px);
+  padding-top: clamp(14px, 3.2vw, 40px);
+}
+
+/* Every glyph bleeds a little light of its own colour into the glass, with
+   the faintest red and cyan fringe of three guns not quite in line. */
+@utility phosphor {
+  text-shadow:
+    0 0 1px color-mix(in oklab, currentColor 50%, transparent),
+    0 0 6px color-mix(in oklab, currentColor 25%, transparent),
+    0 0 14px color-mix(in oklab, currentColor 10%, transparent),
+    -0.5px 0 color-mix(in oklab, --theme(--color-red) 14%, transparent),
+    0.5px 0 color-mix(in oklab, --theme(--color-cyan) 14%, transparent);
+}
+
+/* The same light around strokes and shapes: icons, the memory bar. */
+@utility phosphor-stroke {
+  filter: drop-shadow(0 0 4px color-mix(in oklab, currentColor 45%, transparent));
+}
+
+/* The tube, lit a little brighter at the centre than at the edges. */
+@utility crt-screen {
+  background: radial-gradient(
+    ellipse 80% 70% at 50% 45%,
+    color-mix(in oklab, --theme(--color-screen), white 3%),
+    --theme(--color-screen) 55%,
+    color-mix(in oklab, --theme(--color-screen), black 30%)
+  );
+}
+
+/* The glass in front of it: a soft reflection, darker edges, a curved rim. */
+@utility crt-glass {
+  background:
+    radial-gradient(ellipse 60% 38% at 22% 8%, rgb(255 255 255 / 3.5%), transparent 70%),
+    radial-gradient(ellipse 78% 72% at 50% 50%, transparent 55%, rgb(0 0 0 / 50%));
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 4%),
+    inset 0 0 70px rgb(0 0 0 / 70%);
+}
+
+/* The electron beam of a tube coming on — first a dot, then a line — nearly white. */
+@utility crt-beam {
+  background: --theme(--color-ink);
+  box-shadow:
+    0 0 10px 2px rgb(255 255 255 / 75%),
+    0 0 44px 10px color-mix(in oklab, --theme(--color-cyan) 22%, transparent);
+}
+
+/* Character cells, each a block one column wide, in the current colour. */
+@utility cells {
+  background: repeating-linear-gradient(90deg, currentColor 0 calc(1ch - 2px), transparent calc(1ch - 2px) 1ch);
+}
+
+/* A key on the phone's deck: a little raised, a little lit from above. */
+@utility keycap {
+  border: 1px solid color-mix(in oklab, --theme(--color-ink) 9%, transparent);
+  background: linear-gradient(
+    color-mix(in oklab, --theme(--color-screen), white 4%),
+    color-mix(in oklab, --theme(--color-screen), black 10%)
+  );
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    0 2px 0 --theme(--color-black),
+    0 4px 8px rgb(0 0 0 / 50%);
+}

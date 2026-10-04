@@ -25,6 +25,9 @@ export const machine = {
   ].join(" "),
 };
 
+/** What the guest has of it to use. */
+export const usableMemoryMB = machine.memoryMB - 16;
+
 /** File contents, one blob per file, named by hash (see scripts/lib/rootfs.ts). */
 export const BLOBS = "fs/";
 

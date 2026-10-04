@@ -1,61 +1,84 @@
-import "@fontsource/monaspace-neon/400.css";
-import "@fontsource/monaspace-neon/600.css";
-import "@xterm/xterm/css/xterm.css";
+// The terminal, one per page like the machine behind it (session.ts). React
+// only gives it a place on the screen: components/Terminal.tsx.
+
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
-import { terminalTheme } from "./theme.ts";
+import { theme } from "./theme.ts";
 
 // Monaspace Neon for text; Nerd Font icons from their own font, fetched only
-// when one appears (style.css); CJK from whatever the system has.
-const FONT = '"Monaspace Neon", "Symbols Nerd Font Mono", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei UI", monospace';
+// when one appears (index.css); CJK from whatever the system has.
+const FONT =
+  '"Monaspace Neon", "Symbols Nerd Font Mono", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei UI", monospace';
+
+/** Phones get a smaller face, from Tailwind's `sm` breakpoint down. */
+const compact = matchMedia("(width < 40rem)");
+const fontSize = () => (compact.matches ? 13 : 15);
 
 /** Opens http(s) links — absolute, or relative to this page — in a new tab; anything else is ignored. */
 export function openLink(url: string): void {
   try {
     const target = new URL(url, location.href);
     if (target.protocol === "https:" || target.protocol === "http:") window.open(target, "_blank", "noopener");
-  } catch {}
+  } catch {
+    // Not a URL at all: nothing to open.
+  }
 }
 
-export async function createTerminal(host: HTMLElement) {
-  const compact = matchMedia("(max-width: 640px)").matches;
-  const fontSize = compact ? 13 : 15;
-  // xterm.js measures glyphs once, up front: the font has to be there first.
-  await Promise.all([`400 ${fontSize}px "Monaspace Neon"`, `600 ${fontSize}px "Monaspace Neon"`].map((f) => document.fonts.load(f)));
+export const term = new Terminal({
+  fontFamily: FONT,
+  fontSize: fontSize(),
+  fontWeightBold: "600",
+  lineHeight: 1.3,
+  cursorBlink: true,
+  cursorStyle: "block",
+  cursorInactiveStyle: "outline",
+  scrollback: 5000,
+  theme,
+  allowProposedApi: true,
+  macOptionIsMeta: true,
+  linkHandler: { activate: (_, url) => openLink(url) }, // OSC 8 hyperlinks
+});
 
-  const term = new Terminal({
-    fontFamily: FONT,
-    fontSize,
-    fontWeightBold: "600",
-    lineHeight: 1.3,
-    cursorBlink: true,
-    cursorStyle: "bar",
-    cursorWidth: 2,
-    cursorInactiveStyle: "outline",
-    scrollback: 5000,
-    theme: terminalTheme,
-    allowProposedApi: true,
-    macOptionIsMeta: true,
-    linkHandler: { activate: (_, url) => openLink(url) }, // OSC 8 hyperlinks
-  });
+const fit = new FitAddon();
+term.loadAddon(fit);
+term.loadAddon(new Unicode11Addon());
+term.unicode.activeVersion = "11"; // CJK and emoji take two cells
+term.loadAddon(new WebLinksAddon((_, url) => openLink(url)));
 
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  term.loadAddon(new Unicode11Addon());
-  term.unicode.activeVersion = "11"; // CJK and emoji take two cells
-  term.loadAddon(new WebLinksAddon((_, url) => openLink(url)));
-  // The default DOM renderer: the browser lays out the glyphs itself, so text
-  // stays crisp at any pixel ratio and CJK falls back to system fonts cleanly.
-  term.open(host);
+compact.addEventListener("change", () => {
+  term.options.fontSize = fontSize();
+  fit.fit();
+});
 
+/** xterm.js measures glyphs once, when it opens: the font has to be in first. */
+export const fonts = Promise.all(["400", "600"].map((weight) => document.fonts.load(`${weight} 1em "Monaspace Neon"`)));
+
+const { promise: opened, resolve: open } = Promise.withResolvers<void>();
+
+/** Settles once the terminal is on screen and knows its size. */
+export { opened };
+
+/**
+ * Puts the terminal into `host` and keeps it fitted there: a React ref
+ * callback, cleanup included. The default DOM renderer: the browser lays out
+ * the glyphs itself, so text stays crisp at any pixel ratio, CJK falls back to
+ * system fonts cleanly, and every glyph is an element CSS can light.
+ */
+export function mount(host: HTMLElement | null) {
+  if (!host) return;
+  if (!term.element) term.open(host); // StrictMode mounts twice; a terminal opens once
   let frame = 0;
-  new ResizeObserver(() => {
+  const resize = new ResizeObserver(() => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => fit.fit());
-  }).observe(host);
+  });
+  resize.observe(host);
   fit.fit();
-
-  return term;
+  open();
+  return () => {
+    resize.disconnect();
+    cancelAnimationFrame(frame);
+  };
 }

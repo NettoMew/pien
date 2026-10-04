@@ -164,8 +164,12 @@ const { json, blobs, bytes } = await rootfs.export(blobDir);
 let stale = 0;
 let stored = 0;
 for (const name of await readdir(blobDir)) {
-  if (blobs.has(name)) stored += (await stat(join(blobDir, name))).size;
-  else (await rm(join(blobDir, name)), stale++);
+  if (blobs.has(name)) {
+    stored += (await stat(join(blobDir, name))).size;
+  } else {
+    await rm(join(blobDir, name));
+    stale++;
+  }
 }
 
 const fsJson = JSON.stringify(json);

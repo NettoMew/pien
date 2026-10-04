@@ -4,7 +4,6 @@
 // leaves this page; only the key made from it is kept, in this browser.
 
 import type { Machine } from "../machine.ts";
-import { formatBytes, status } from "../status.ts";
 import type { Way } from "./index.ts";
 
 const STORE = "relay";
@@ -59,9 +58,6 @@ export class Relay implements Way {
   private channel?: Channel;
   private state: "off" | "connecting" | "up" | "down" = "off";
   private wanted = false;
-  private rx = 0;
-  private tx = 0;
-  private shown = 0;
 
   constructor(machine: Machine) {
     this.machine = machine;
@@ -77,7 +73,6 @@ export class Relay implements Way {
     const key = stored();
     if (!key) return this.fail("nokey", true);
     this.state = "connecting";
-    status.net("connecting", "Relay connecting");
 
     const url = new URL(URL_, location.href);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -98,18 +93,13 @@ export class Relay implements Way {
     }
     if (this.socket !== socket) return;
     inbox.drain((sealed) => {
-      this.rx += sealed.byteLength;
       this.channel!.open(sealed).then(
-        (frame) => {
-          this.machine.sendFrame(frame);
-          this.show();
-        },
+        (frame) => this.machine.sendFrame(frame),
         () => this.fail("protocol"),
       );
     });
     this.state = "up";
     this.machine.control(UP);
-    this.show(true);
   }
 
   disconnect(quietly = false) {
@@ -118,14 +108,11 @@ export class Relay implements Way {
     this.state = "off";
     this.hangUp();
     if (!quietly) this.machine.control("net down off");
-    status.net("off", "");
   }
 
   frame(frame: Uint8Array) {
     if (this.state !== "up" || !this.channel) return;
-    this.tx += frame.length + 16;
     this.channel.seal(frame);
-    this.show();
   }
 
   private fail(why: string, quietly = false) {
@@ -133,7 +120,6 @@ export class Relay implements Way {
     this.state = "down";
     this.hangUp();
     this.machine.control(`net down ${why}`);
-    if (!quietly) status.net("down", "Relay offline");
   }
 
   private hangUp() {
@@ -141,12 +127,6 @@ export class Relay implements Way {
     this.socket = undefined;
     this.channel = undefined;
     socket?.close();
-  }
-
-  private show(now = false) {
-    if (this.state !== "up" || (!now && performance.now() - this.shown < 500)) return;
-    this.shown = performance.now();
-    status.net("up", `Relay  ↓${formatBytes(this.rx)}  ↑${formatBytes(this.tx)}`);
   }
 }
 

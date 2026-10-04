@@ -2,6 +2,9 @@
 // page imports it from: src/warp/warp.wasm. Needs the wasm32-unknown-unknown
 // target (rustup target add wasm32-unknown-unknown).
 
+// WebAssembly's types come with the DOM's.
+/// <reference lib="dom" />
+
 import { spawnSync } from "node:child_process";
 import { copyFile, readFile } from "node:fs/promises";
 import { join } from "node:path";

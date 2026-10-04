@@ -4,7 +4,6 @@
 
 import type { Machine } from "../machine.ts";
 import type { Way } from "../net/index.ts";
-import { formatBytes, status } from "../status.ts";
 import { ApiError, type Call, type Device, openBytes, register, remove } from "./api.ts";
 import { Core, DOWN, type Event, type Host } from "./core.ts";
 import wasm from "./warp.wasm?url";
@@ -51,9 +50,6 @@ export class Warp implements Host, Way {
   private state: "off" | "connecting" | "up" | "down" = "off";
   /** The visitor asked for the network and has not turned it off since. */
   private wanted = false;
-  private rx = 0;
-  private tx = 0;
-  private shown = 0;
 
   constructor(machine: Machine) {
     this.machine = machine;
@@ -68,11 +64,9 @@ export class Warp implements Host, Way {
     if (this.state === "up") return this.machine.control(this.up());
     if (this.state === "connecting") return;
     this.state = "connecting";
-    status.net("connecting", "WARP connecting");
     try {
       let device = load();
       if (!device) {
-        status.net("connecting", "WARP registering");
         device = await register(call);
         save(device);
         this.machine.control("net known");
@@ -92,7 +86,6 @@ export class Warp implements Host, Way {
     this.core?.close(); // close_notify, while the socket still takes it
     this.hangUp();
     if (!quietly) this.machine.control("net down off");
-    status.net("off", "");
   }
 
   frame(frame: Uint8Array) {
@@ -109,8 +102,6 @@ export class Warp implements Host, Way {
   toSocket(bytes: Uint8Array<ArrayBuffer>) {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(bytes);
-    this.tx += bytes.length;
-    this.show();
   }
 
   toGuest(frame: Uint8Array<ArrayBuffer>) {
@@ -122,7 +113,7 @@ export class Warp implements Host, Way {
       this.state = "up";
       this.machine.control(this.up());
       this.timer = setInterval(() => this.core?.tick(), TICK);
-      return this.show(true);
+      return;
     }
     if (event.code === DOWN.tls && event.detail === ACCESS_DENIED) {
       save(null); // gone at Cloudflare's end: register afresh next time
@@ -147,11 +138,7 @@ export class Warp implements Host, Way {
     socket.onopen = () => {
       if (!this.core!.open(openBytes(this.device!))) this.fail("device");
     };
-    socket.onmessage = ({ data }: MessageEvent<ArrayBuffer>) => {
-      this.rx += data.byteLength;
-      this.core!.fromSocket(new Uint8Array(data));
-      this.show();
-    };
+    socket.onmessage = ({ data }: MessageEvent<ArrayBuffer>) => this.core!.fromSocket(new Uint8Array(data));
     socket.onclose = () => {
       if (this.socket === socket) this.fail(this.state === "up" ? "closed" : "pipe");
     };
@@ -163,7 +150,6 @@ export class Warp implements Host, Way {
     this.state = "down";
     this.hangUp();
     this.machine.control(`net down ${why}`);
-    status.net("down", "WARP offline");
   }
 
   private hangUp() {
@@ -171,12 +157,5 @@ export class Warp implements Host, Way {
     const socket = this.socket;
     this.socket = undefined;
     socket?.close();
-  }
-
-  /** The status line, at most twice a second. */
-  private show(now = false) {
-    if (this.state !== "up" || (!now && performance.now() - this.shown < 500)) return;
-    this.shown = performance.now();
-    status.net("up", `WARP  ↓${formatBytes(this.rx)}  ↑${formatBytes(this.tx)}`);
   }
 }

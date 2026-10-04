@@ -98,7 +98,7 @@ hostd（root，ttyS1）◀── net up / net down ── 页面
   - 用控制行告诉 hostd 结果：`net up warp 172.16.0.2/32 172.16.0.1 1.1.1.1 1280`，或 `net down <原因>`。
 - **`api.ts`**：调注册 API，凭据存进 `localStorage["warp"]`，包括 id、token、私钥、入口公钥和分到的地址。页面和 `scripts/warp.ts` 共用这份代码。
 - **`core.ts`**：wasm 接口的类型化封装。
-- **状态栏**：`⇅ WARP ↓1.2 MB ↑0.3 MB`；连接中显示琥珀色，断开显示灰色。
+- **状态**：页面不再有状态栏，连接情况由客户机里的 `net` 报告。
 
 ## 客户机
 

@@ -44,7 +44,10 @@ const listeners: ((bytes: Uint8Array) => void)[] = [];
 machine.onOutput((bytes) => {
   lastOutput = performance.now();
   tail = (tail + new TextDecoder().decode(bytes)).slice(-64);
-  if (tail.includes(PROMPT)) (prompts++, (tail = ""));
+  if (tail.includes(PROMPT)) {
+    prompts++;
+    tail = "";
+  }
   listeners.forEach((listen) => listen(bytes));
 });
 
@@ -77,6 +80,8 @@ if (args.command !== undefined) {
     since += decoder.decode(bytes, { stream: true });
   });
   machine.write(` ${args.command}\r`);
+  // fish marks the end of the command (OSC 133;D), then its next prompt (133;B).
+  // oxlint-disable-next-line no-control-regex
   await until(() => /\x1b\]133;D[\s\S]*\x1b\]133;B/.test(since));
   if (args.trace) console.log(`\n9p reads: ${reads.join(" ")}`);
   process.exit(0);

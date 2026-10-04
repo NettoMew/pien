@@ -1,9 +1,25 @@
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import { feed, indexPage, postLinks, postPage, type Site } from "./scripts/lib/blog.ts";
 import { readPosts } from "./scripts/lib/content.ts";
 import { warpPipes } from "./scripts/lib/warp-pipes.ts";
+import { theme, themeCss } from "./src/theme.ts";
+
+// The terminal's palette (src/theme.ts) at the top of the page's head, as
+// custom properties for the stylesheets to name: the colours are in place
+// from the first paint, the browser's own chrome included.
+function palette(): Plugin {
+  return {
+    name: "palette",
+    transformIndexHtml: () => [
+      { tag: "style", children: themeCss, injectTo: "head-prepend" },
+      { tag: "meta", attrs: { name: "theme-color", content: theme.background }, injectTo: "head" },
+    ],
+  };
+}
 
 // The posts as web pages (blog/<slug>/), an index (blog/) and a feed
 // (feed.xml): rendered per request in dev, written out by the build. The
@@ -64,12 +80,25 @@ function vmManifest(): Plugin {
 const relay = { [`/relay`]: { target: `ws://${process.env.RELAY ?? "127.0.0.1:8095"}`, ws: true } };
 
 export default defineConfig({
-  plugins: [vmManifest(), blog(), warpPipes()],
+  plugins: [react(), tailwindcss(), palette(), vmManifest(), blog(), warpPipes()],
   server: { proxy: relay },
   preview: { proxy: relay },
   build: {
-    target: "es2022", // top-level await
     assetsInlineLimit: 0, // keep v86.wasm a separate, cacheable file
-    chunkSizeWarningLimit: 1024, // v86 and xterm.js are needed up front; splitting buys nothing
+    // Everything is needed up front, but the libraries change far less often
+    // than the page, and the machine's (v86, xterm.js) on another clock than
+    // the interface's: each set in a chunk of its own stays cached across
+    // releases of the others.
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "machine", test: /node_modules\/(v86|@xterm)\//, priority: 2 },
+            { name: "interface", test: /node_modules/, priority: 1 },
+          ],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1024, // the machine's chunk is most of a megabyte by itself
   },
 });

@@ -16,7 +16,7 @@ npm run dev            # http://localhost:5173
 | `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件 |
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
-| `npm run typecheck` / `npm run build` | 类型检查 / 生产构建，产物在 `dist/` |
+| `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
 | `RELAY=host:port npm run dev` | 开发服务器把 `/relay` 转给那里的中继（默认 127.0.0.1:8095，见 docs/relay.md） |
 | `npm run warp -- register` / `delete` | 注册或删除一个开发用的 WARP 设备，配合 `warp/examples/edge.rs` 直连入口（见 [docs/warp.md](docs/warp.md)） |
@@ -37,7 +37,7 @@ npm run dev            # http://localhost:5173
 
 **快照**（`scripts/build-state.ts`）。在 Node 里冷启动一次，先用一个一次性的会话把常用的东西预热进页缓存，再开一个全新会话、从第一个字节起录下终端输出。等它停在提示符时，整机存成快照，录下的输出另存。访客恢复快照后，页面回放这段输出，fish 已经在提示符等着了。
 
-**页面**（`src/`）。xterm.js 渲染终端，字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。底部状态栏通过浏览器的资源计时，实时显示每一次按需加载。触屏设备上多一排快捷键：Tab、↑、Ctrl-C 和几个常用命令。
+**页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再列出机器的情况，进度条跟着真实的下载走；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。
 
 **联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。另一条路 `net warp` 用浏览器里的 Rust/wasm 客户端直连 Cloudflare WARP（试验，[docs/warp.md](docs/warp.md)）。
 
@@ -59,8 +59,8 @@ npm run dev            # http://localhost:5173
 
 | | |
 |---|---|
-| 首次访问 | 约 6.1 MB（gzip 后）：快照 5.3 MB，v86 的 wasm 381 KB，JS 188 KB |
-| 本地到出现提示符 | 0.3 秒（不含网络） |
+| 首次访问 | 约 6.2 MB（gzip 后）：快照 5.3 MB，v86 的 wasm 385 KB，JS 294 KB（v86 与 xterm.js 185 KB，React 等界面库 103 KB，页面自己 6 KB），CSS 5 KB |
+| 本地到出现提示符 | 1.4 秒，其中约 1 秒是开机动画；机器自己 0.3 秒就恢复好了（不含网络） |
 | `cat blog/hello.md` | 只请求这一篇，911 B |
 | 内核 | 1.6 MB；客户机可用内存 58 MB |
 | 整个系统 | 623 个文件块，43 MB，压缩后 9.0 MB，全部按需加载 |
@@ -86,3 +86,6 @@ npm run dev            # http://localhost:5173
 - **busybox 的 wget 访问 https 要 `ssl_client`**：它是单独的包，没有它 wget 只会报 `can't execute 'ssl_client'`。
 - **mtr 要开原始套接字**：访客不是 root，所以 `mtr-packet` 设成 setuid（`image.config.ts` 的 `modes` 现在也作用于包里的文件）。
 - **hickory 的 DoT 默认没有根证书**：不开 `webpki-roots` 特性，根证书库是空的，所有 TLS 上游都会失败。
+- **xterm.js 量父元素时把内边距也算进去**：Tailwind 的 preflight 让所有元素都是 `border-box`，`getComputedStyle().height` 于是包含内边距，FitAddon 多算出两行，终端伸出屏幕底下、获得焦点时把屏幕顶上去。边距放在外面一层（`components/Terminal.tsx`），屏幕用 `overflow: clip`，不能被滚动。
+- **xterm.js 6 自己涂背景**：底色不再画在 `.xterm-viewport` 上，而是以内联样式写在 `.xterm-scrollable-element` 上，要用 `!important` 去掉，显像管的渐变才透得出来。
+- **motion 的分属性过渡会整个替换默认过渡**：给某个属性单独写了 `transition`，外层的 `delay` 对它就不起作用了，延迟要写进每一个属性里。
