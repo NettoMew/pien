@@ -2,6 +2,7 @@ import { AnimatePresence, domAnimation, LazyMotion, m, type Variants } from "mot
 import { Suspense, useState } from "react";
 import type { MachineName } from "../vm.config.ts";
 import { Boot } from "./components/Boot.tsx";
+import { Drop } from "./components/Drop.tsx";
 import { Keys } from "./components/Keys.tsx";
 import { Screen } from "./components/Screen.tsx";
 import { Terminal } from "./components/Terminal.tsx";
@@ -54,6 +55,7 @@ export default function App() {
           <AnimatePresence onExitComplete={() => term.focus()}>
             {booted !== machine && <Boot key={machine} onDone={() => setBooted(machine)} />}
           </AnimatePresence>
+          <Drop />
         </Screen>
         <Keys />
       </div>

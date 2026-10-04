@@ -24,6 +24,11 @@ if [ -b /dev/sda ]; then
 	done
 fi
 
+# Files the visitor drops on the page, or picks for `drop` (see hostd).
+mkdir -p /run/drop
+echo none > /run/drop/state
+chmod 666 /run/drop/state
+
 # The network: loopback now, eth0 once a visitor types `net warp` (see hostd).
 # The state file is the guest's to mark "waiting" in; hostd writes the rest.
 ip link set lo up

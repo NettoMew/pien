@@ -5,7 +5,8 @@ function help --description 'What this machine can do'
         'cat post.md' 'read one, typeset' \
         'open post.md' 'read it as a web page' \
         'fastfetch  htop' 'look at this machine' \
-        'net on' 'go online: curl, ping, ssh, mtr'
+        'net on' 'go online: curl, ping, ssh, mtr' \
+        drop 'bring in files from your computer'
     if __on_workbench
         set -a rows \
             nvim 'the editor, set up for every language here' \

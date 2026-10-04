@@ -10,6 +10,9 @@
 #   net down <why>   it went down, or was turned off: take eth0 off again
 #   net known        this browser already has a WARP device …
 #   net forgotten    … or no longer
+#   drop <n>         files from the visitor's computer wait in /.drop/<n>
+#                    (src/drop.ts): move them into ~/drop
+#   drop none        … or the visitor chose none
 #
 # Window sizes need no message: the virtio console reports them itself.
 
@@ -21,6 +24,25 @@ zone() {
 	[ -f "/usr/share/zoneinfo/$1" ] || return
 	ln -sf "/usr/share/zoneinfo/$1" /etc/localtime
 	echo "$1" > /etc/timezone
+}
+
+# Dropped files arrive in a directory the kernel has never seen, so nothing
+# it remembers of the filesystem hides them; moving them is a rename, and
+# the files stay where they are: on the visitor's computer, read as needed.
+drop() {
+	case $1 in
+	none)
+		echo none > /run/drop/state
+		return
+		;;
+	"" | *[!0-9]*) return ;;
+	esac
+	mkdir -p /home/guest/drop
+	ls -A "/.drop/$1" > /run/drop/names
+	find "/.drop/$1" -mindepth 1 -maxdepth 1 -exec mv -f {} /home/guest/drop/ \;
+	rmdir "/.drop/$1"
+	chown guest:guest /home/guest/drop
+	echo "$1" > /run/drop/state
 }
 
 stty -echo
@@ -65,5 +87,6 @@ while read -r cmd arg; do
 		forgotten) rm -f /run/net/known ;;
 		esac
 		;;
+	drop) drop "$arg" ;;
 	esac
 done

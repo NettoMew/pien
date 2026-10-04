@@ -6,6 +6,7 @@
 import wasm from "v86/build/v86.wasm?url";
 import manifest from "virtual:vm-manifest";
 import { type MachineName, machines, v86Options } from "../vm.config.ts";
+import { pick, put } from "./drop.ts";
 import { Machine } from "./machine.ts";
 import { known, net, unwire as unwireNet } from "./net/index.ts";
 import { useMachine } from "./store.ts";
@@ -26,12 +27,13 @@ term.onData((data) => live && machine?.write(data));
 term.onBinary((data) => live && machine?.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
 term.onResize(({ cols, rows }) => live && machine?.resize(cols, rows));
 
-// The guest's `open`, `net` and `workbench`/`home` print a private escape
-// sequence; see open.fish, net.fish and workbench.fish.
+// The guest's `open`, `net`, `drop` and `workbench`/`home` print a private
+// escape sequence; see open.fish, net.fish, drop.fish and workbench.fish.
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
   if (verb === "net" && machine) void net(rest[0] ?? "", rest.slice(1).join(";"), machine);
+  if (verb === "drop" && machine) pick(machine);
   if (verb === "machine" && (rest[0] === "home" || rest[0] === "workbench") && rest[0] !== useMachine.getState().machine) {
     useMachine.setState({ next: rest[0] });
   }
@@ -58,6 +60,13 @@ export function start(name: MachineName) {
   }
   machine = started;
   void resume(started, name);
+}
+
+/** Files dropped onto the page, into the guest's ~/drop; false if no machine is up to take them. */
+export function dropFiles(files: File[]): boolean {
+  if (!live || !machine) return false;
+  put(files, machine);
+  return true;
 }
 
 /** Keeps the machine in the address (?workbench), so a reload comes back to it. */
