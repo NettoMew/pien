@@ -1,0 +1,215 @@
+:root {
+  --bg: #0a0b0e;
+  --fg: #e7e9ee;
+  --muted: #7e8590;
+  --faint: #5c636e;
+  --line: #1f232b;
+  --cyan: #4de8ff;
+  --amber: #ffb547;
+  --red: #ff6b6b;
+  --gutter: clamp(14px, 3.2vw, 44px);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+}
+
+body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  height: 100dvh;
+  overflow: hidden;
+  color: var(--muted);
+  font: 12px/1 "Geist Mono", ui-monospace, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+#terminal {
+  min-height: 0;
+  padding: var(--gutter) var(--gutter) 10px;
+  animation: enter 0.6s ease-out both;
+}
+
+#terminal .xterm {
+  height: 100%;
+}
+
+#terminal .xterm-viewport {
+  background: transparent !important;
+}
+
+/* Keys a phone keyboard lacks, and a few commands — touch screens only. */
+#keys {
+  display: none;
+  gap: 8px;
+  padding: 8px var(--gutter);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+@media (pointer: coarse) {
+  #keys {
+    display: flex;
+  }
+}
+
+#keys button {
+  flex: none;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: 13px "Geist Mono", ui-monospace, monospace;
+  touch-action: manipulation;
+}
+
+#keys button[data-run] {
+  color: var(--cyan);
+}
+
+#keys button:active {
+  background: var(--line);
+}
+
+#keys .gap {
+  flex: none;
+  width: 1px;
+  margin: 6px 2px;
+  background: var(--line);
+}
+
+#status {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 34px;
+  padding: 0 var(--gutter) env(safe-area-inset-bottom);
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.indicator {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--fg);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 10px var(--amber);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+
+[data-state="loading"] .dot {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+[data-state="running"] .dot {
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+}
+
+[data-state="error"] .dot {
+  background: var(--red);
+  box-shadow: 0 0 10px var(--red);
+}
+
+#activity {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fetch {
+  display: inline-flex;
+  gap: 8px;
+  animation: arrive 2.4s ease-out both;
+}
+
+.fetch .arrow {
+  color: var(--cyan);
+}
+
+.fetch .path {
+  color: var(--fg);
+}
+
+.fetch .detail {
+  color: var(--faint);
+}
+
+#net {
+  color: var(--muted);
+  white-space: pre;
+}
+
+#net[data-net="off"] {
+  display: none;
+}
+
+#net[data-net="connecting"] {
+  color: var(--amber);
+}
+
+#net[data-net="up"]::before {
+  content: "⇅ ";
+  color: var(--cyan);
+}
+
+#net[data-net="down"] {
+  color: var(--faint);
+}
+
+#machine {
+  color: var(--faint);
+}
+
+@media (max-width: 640px) {
+  #machine {
+    display: none;
+  }
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* A fetch flashes in bright, then settles back into the status line. */
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  12% {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+  }
+}

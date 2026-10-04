@@ -1,0 +1,20 @@
+#!/bin/sh
+# One-time system setup, before any session starts.
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mkdir -p /dev/pts /dev/shm
+mount -t devpts -o gid=5,mode=620 devpts /dev/pts
+mount -t tmpfs -o mode=1777 tmpfs /tmp
+mount -t tmpfs -o mode=755 tmpfs /run
+ln -sf /proc/self/fd /dev/fd
+
+hostname -F /etc/hostname
+
+# The network: loopback now, eth0 once a visitor types `net warp` (see hostd).
+# The state file is the guest's to mark "waiting" in; hostd writes the rest.
+ip link set lo up
+mkdir -p /run/net
+echo off > /run/net/state
+chmod 666 /run/net/state
+echo '0 2147483647' > /proc/sys/net/ipv4/ping_group_range # ping without root

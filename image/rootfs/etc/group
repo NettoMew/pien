@@ -1,0 +1,4 @@
+root:x:0:root
+tty:x:5:
+guest:x:1000:
+nogroup:x:65534:

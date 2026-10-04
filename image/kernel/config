@@ -1,0 +1,71 @@
+# The guest kernel: just enough for v86 — two serial lines, the virtio
+# console, and a root filesystem served over 9p. Everything is built in, so
+# the kernel mounts its root itself: no modules, no initramfs.
+#
+# Applied on top of `allnoconfig` (see build.sh); anything not named here is off.
+
+CONFIG_LOCALVERSION="-home"
+CONFIG_CC_OPTIMIZE_FOR_SIZE=y
+CONFIG_KERNEL_XZ=y
+
+# The machine v86 emulates
+CONFIG_M686=y
+CONFIG_CPU_SUP_INTEL=y
+CONFIG_PCI=y
+CONFIG_PCI_GODIRECT=y
+CONFIG_HZ_100=y
+CONFIG_NO_HZ_IDLE=y
+CONFIG_HIGH_RES_TIMERS=y
+
+# What userland (busybox, musl, fish) leans on
+CONFIG_PRINTK=y
+CONFIG_MULTIUSER=y
+CONFIG_FUTEX=y
+CONFIG_EPOLL=y
+CONFIG_SIGNALFD=y
+CONFIG_TIMERFD=y
+CONFIG_EVENTFD=y
+CONFIG_SHMEM=y
+CONFIG_ADVISE_SYSCALLS=y
+CONFIG_MEMBARRIER=y
+CONFIG_POSIX_TIMERS=y
+# musl on i386 still makes the 32-bit time syscalls (pselect6 and friends)
+CONFIG_COMPAT_32BIT_TIME=y
+CONFIG_FILE_LOCKING=y
+CONFIG_INOTIFY_USER=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+
+# Filesystems
+CONFIG_PROC_FS=y
+CONFIG_PROC_SYSCTL=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+
+# Terminals: ttyS0 for the kernel log, ttyS1 for the control line, hvc0 for the visitor
+CONFIG_TTY=y
+CONFIG_UNIX98_PTYS=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_8250_NR_UARTS=2
+CONFIG_SERIAL_8250_RUNTIME_UARTS=2
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_PCI_LEGACY=y
+CONFIG_VIRTIO_CONSOLE=y
+
+# The root filesystem: 9p over virtio, which wants a (device-less) network stack
+CONFIG_NET=y
+CONFIG_UNIX=y
+CONFIG_NET_9P=y
+CONFIG_NET_9P_VIRTIO=y
+CONFIG_NETWORK_FILESYSTEMS=y
+CONFIG_9P_FS=y
+
+# eth0, for `net warp` (docs/warp.md): IPv4 over a virtio network card
+CONFIG_INET=y
+CONFIG_NETDEVICES=y
+CONFIG_NET_CORE=y
+CONFIG_VIRTIO_NET=y

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0b0e" />
+    <meta name="description" content="一台真正的 Linux，运行在你的浏览器里。" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" type="application/rss+xml" title="guest@home" href="/feed.xml" />
+    <title>guest@home</title>
+  </head>
+  <body data-state="loading">
+    <main id="terminal" aria-label="终端"></main>
+    <nav id="keys" aria-label="快捷键">
+      <button type="button" data-key="tab">Tab</button>
+      <button type="button" data-key="up" aria-label="上一条命令">↑</button>
+      <button type="button" data-key="interrupt" aria-label="中断">^C</button>
+      <span class="gap"></span>
+      <button type="button" data-run="help">help</button>
+      <button type="button" data-run="blog">blog</button>
+      <button type="button" data-run="ls -l blog">ls</button>
+      <button type="button" data-run="clear">clear</button>
+    </nav>
+    <footer id="status">
+      <span class="indicator"><span class="dot"></span><span id="state">载入中</span></span>
+      <span id="activity"></span>
+      <span id="net" data-net="off"></span>
+      <span id="machine"></span>
+    </footer>
+    <noscript>
+      <p>这个首页是一台运行在浏览器里的 Linux，需要启用 JavaScript。文章也可以直接读：</p>
+      <!-- posts -->
+    </noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

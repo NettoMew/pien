@@ -1,0 +1,5 @@
+# busybox init
+::sysinit:/etc/rc
+hvc0::respawn:/usr/libexec/home/session
+ttyS1::respawn:/usr/libexec/home/hostd
+::shutdown:/bin/umount -a -r

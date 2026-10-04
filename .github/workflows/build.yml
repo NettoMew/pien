@@ -1,0 +1,58 @@
+# Builds the whole site from scratch — WARP client, kernel, image, snapshot, page — checks
+# it in a real browser, and hands the result over as the "site" artifact,
+# ready for any static host (public/_headers sets the cache rules).
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: npm
+
+      - run: npm ci
+
+      # Downloads (Alpine packages, BIOS) and the kernel are keyed by content.
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: cache-${{ hashFiles('image/kernel/**', 'image/image.config.ts') }}
+          restore-keys: cache-
+
+      # The WARP client (warp/, Rust) is a wasm module the page imports.
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo test --manifest-path warp/Cargo.toml
+      - run: npm run build:warp
+
+      - run: npm run build:kernel
+      - run: npm run build:vm
+      - run: npm run typecheck
+      - run: npm run build
+
+      - name: Smoke test
+        run: |
+          npx vite preview --port 4173 --strictPort &
+          until curl -sf http://localhost:4173/ > /dev/null; do sleep 0.5; done
+          npm run smoke -- http://localhost:4173/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: dist
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: .cache/smoke

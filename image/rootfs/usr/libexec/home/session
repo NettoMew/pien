@@ -1,0 +1,14 @@
+#!/bin/sh
+# The login session on hvc0, the virtio console the page renders.
+#
+# The first session waits here until a browser attaches: hostd sets the flag
+# once the page has said hello and set the clock. (The saved state holds a
+# session the builder attached; a visitor's page only resets the clock.)
+#
+# A flag and a short poll, not a FIFO: a session respawned after hostd has
+# already set the flag would never read the FIFO, and hostd would hang
+# writing to it — for good, in the saved state.
+
+until [ -e /run/attached ]; do sleep 0.1; done
+export TERM=xterm-256color  # what the page renders with; su -l keeps it
+exec su -l guest

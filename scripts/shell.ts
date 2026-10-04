@@ -1,0 +1,89 @@
+// A terminal into the machine, from your own shell. Restores the snapshot,
+// exactly as a visitor would.
+//
+//   npm run shell                       interactive; Ctrl-] quits
+//   npm run shell -- -c "uname -a"      run one command and print its output
+//   npm run shell -- --trace -c "..."   also list the files the guest reads over 9p
+//   npm run shell -- --put image/rootfs/usr/libexec/home/md.awk=/mnt/md.awk -c "..."
+//                                       drop a local file into the guest first, to try changes
+//                                       without rebuilding the image
+//   npm run shell -- --cold             boot the kernel instead of restoring the snapshot
+
+import { readFile } from "node:fs/promises";
+import { join, sep } from "node:path";
+import { parseArgs } from "node:util";
+import { Machine } from "../src/machine.ts";
+import { v86Options } from "../vm.config.ts";
+import { readManifest, VM } from "./lib/manifest.ts";
+
+const { values: args } = parseArgs({
+  options: {
+    command: { type: "string", short: "c" },
+    put: { type: "string", multiple: true, default: [] },
+    trace: { type: "boolean" },
+    cold: { type: "boolean" },
+  },
+});
+
+const ROOT = join(import.meta.dirname, "..");
+const at = (file: string) => join(VM, file).split(sep).join("/") + (file.endsWith("/") ? "/" : "");
+const { files } = await readManifest();
+const machine = new Machine({
+  ...v86Options(at, files, { cold: args.cold }),
+  wasm_path: join(ROOT, "node_modules/v86/build/v86.wasm"),
+});
+
+const PROMPT = "\x1b]133;B"; // fish: prompt drawn, input starts here
+const reads: string[] = [];
+if (args.trace) machine.emulator.add_listener("9p-read-start", ([name]) => reads.push(name));
+
+let tail = "";
+let prompts = 0;
+let lastOutput = performance.now();
+const listeners: ((bytes: Uint8Array) => void)[] = [];
+machine.onOutput((bytes) => {
+  lastOutput = performance.now();
+  tail = (tail + new TextDecoder().decode(bytes)).slice(-64);
+  if (tail.includes(PROMPT)) (prompts++, (tail = ""));
+  listeners.forEach((listen) => listen(bytes));
+});
+
+const until = async (test: () => boolean) => {
+  while (!test()) await new Promise((resolve) => setTimeout(resolve, 20));
+};
+
+await machine.loaded();
+for (const spec of args.put) {
+  const [local, remote] = spec.split("=") as [string, string];
+  await machine.emulator.create_file(remote, new Uint8Array(await readFile(local)));
+}
+machine.onControl((line) => line === "ready" && machine.attach());
+machine.resize(process.stdout.columns || 100, process.stdout.rows || 30);
+machine.attach();
+
+// Restored, fish already sits at its prompt (and redraws it for the new size);
+// cold, it has yet to start. Either way, wait for the dust to settle.
+if (args.cold) await until(() => prompts > 0);
+await until(() => performance.now() - lastOutput > 300);
+
+if (args.command !== undefined) {
+  // Done once fish reports the command finished (OSC 133;D) and prompts again.
+  let since = "";
+  const decoder = new TextDecoder();
+  reads.length = 0;
+  listeners.push((bytes) => {
+    process.stdout.write(bytes);
+    since += decoder.decode(bytes, { stream: true });
+  });
+  machine.write(` ${args.command}\r`);
+  await until(() => /\x1b\]133;D[\s\S]*\x1b\]133;B/.test(since));
+  if (args.trace) console.log(`\n9p reads: ${reads.join(" ")}`);
+  process.exit(0);
+} else {
+  if (!args.cold && files.screen) process.stdout.write(await readFile(join(VM, files.screen)));
+  listeners.push((bytes) => process.stdout.write(bytes));
+  machine.resize(process.stdout.columns, process.stdout.rows);
+  process.stdin.setRawMode(true);
+  process.stdin.on("data", (data) => (data[0] === 0x1d ? process.exit(0) : machine.write(data)));
+  process.stdout.on("resize", () => machine.resize(process.stdout.columns, process.stdout.rows));
+}
