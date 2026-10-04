@@ -1,0 +1,10 @@
+# The relay's configuration on the server (see relay/src/config.rs for all
+# settings). The key comes from `relay key`, fed the password that `net login`
+# will be given; keep this file readable by the relay's user (65534) only.
+
+listen = "0.0.0.0:8095"
+key = "64 hex digits from: relay key"
+
+[limits]
+sessions = 4
+idle = 7200

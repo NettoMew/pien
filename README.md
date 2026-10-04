@@ -51,7 +51,7 @@ npm run dev            # http://localhost:5173
 
 ## 部署
 
-`.github/workflows/build.yml` 会从零构建整站（内核、镜像、快照、页面），用 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。
+`.github/workflows/build.yml` 会从零构建整站（内核、镜像、快照、页面），用 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on` 还需要中继：一个 Docker 容器，nginx 把 `/relay` 转给它（`deploy/nginx.conf`、`deploy/relay.toml.example`，步骤见 [docs/relay.md](docs/relay.md#部署2026-10-05101)）。
 
 ## 实测
 

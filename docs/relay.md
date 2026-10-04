@@ -127,8 +127,36 @@ ssh -N -L 127.0.0.1:18095:127.0.0.1:8095 <那台机器> &
 RELAY=127.0.0.1:18095 npm run dev
 ```
 
-## 部署（R4，待确认）
+## 部署（2026-10-05，.101）
 
-- 放在哪台机器、Caddy 怎么配，都等用户确认。
-- 推荐放在 .101 的容器里（ping socket 已默认开放，`ping_group_range` 是 0–2147483647），由 nginx 或 Caddy 把 `/relay` 转给它；出口就是那台机器的 IP，也可以配 SOCKS5 交给 Mayami。
-- 浏览器到中继之间的帧有内层加密，Caddy 的访问日志里也只有路径，没有口令。
+```
+访客 ──https://test-demo.arc.moe/relay──▶ .100 Caddy（没改）──▶ .101:18090 nginx（homepage-demo）
+                                                                   │ Docker 网络 homepage
+                                                                   ▼
+                                                     homepage-relay:8095（不发布端口）──▶ 互联网，出口 154.86.23.202
+```
+
+- **中继**：容器 `homepage-relay`，镜像 `homepage-relay:<提交>`，以 65534（nobody）运行，`--restart unless-stopped`，只接在 Docker 网络 `homepage` 上。配置在 `/srv/homepage-relay/relay.toml`（属主 65534，权限 600），只有密钥，没有口令；格式见 `deploy/relay.toml.example`：最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
+- **nginx**：`deploy/nginx.conf` 新增 `location = /relay`，按请求经 Docker 的 DNS 找到中继，所以中继不在时 nginx 也能启动；这一段不写访问日志。容器 `homepage-demo` 多接了 `homepage` 网络。
+- **Caddy（.100）**：没改，它本来就把整个站点连同 WebSocket 转给 .101。
+
+**怎么做的**（镜像在 v2in0 上构建，`.101` 不必拉 Rust 构建环境）：
+
+```sh
+# v2in0：构建
+tar -cf - -C relay Dockerfile .dockerignore Cargo.toml Cargo.lock src | ssh v2in0 docker build -t homepage-relay:<提交> -
+# 经本机传到 .101
+ssh v2in0 "docker save homepage-relay:<提交> | gzip -1" | ssh .101 "gunzip | docker load"
+# .101
+docker network create homepage
+docker run -d --name homepage-relay --restart unless-stopped --network homepage   -v /srv/homepage-relay/relay.toml:/etc/relay.toml:ro homepage-relay:<提交>
+docker network connect homepage homepage-demo
+# 新的 nginx.conf 和站点放好后
+docker restart homepage-demo
+```
+
+**换口令**：在任何一台机器上 `relay key`（输入新口令）得到密钥，写进 `/srv/homepage-relay/relay.toml`，`docker restart homepage-relay`；浏览器里 `net login` 输入新口令。
+
+**回滚**：`/srv/homepage-demo/` 下有带时间戳的 `nginx.conf.bak-*` 和 `site.bak-*`；挪回去，`docker network disconnect homepage homepage-demo`，`docker restart homepage-demo`，再 `docker rm -f homepage-relay`。
+
+**上线后实测**（本机 Chrome 打开 https://test-demo.arc.moe/）：`net on` 5.2 秒（含输入口令）；出口 154.86.23.202；ping 1.1.1.1 平均 41 ms；github 200；下载 1.9 MB/s；.101 自己的内网地址和 10.0.0.1 都被拦下；中继日志里只有计数。
