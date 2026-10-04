@@ -5,28 +5,29 @@
 ```sh
 npm install
 npm run build:warp     # 用 Rust 编 WARP 客户端（wasm）；先 rustup target add wasm32-unknown-unknown
-npm run build:kernel   # 在 Docker 里编译内核；本机没有 Docker 时：KERNEL_HOST=<Linux 主机> npm run build:kernel
-npm run build:vm       # 构建镜像，再在 Node 里开机、存快照（约 30 秒）
+npm run build:kernel   # 在 Docker 里编译内核；本机没有 Docker 时：BUILD_HOST=<Linux 主机> npm run build:kernel
+npm run build:vm       # 构建镜像和工作台的工具链盘（也用 Docker），再在 Node 里开两台机器、各存一份快照
 npm run dev            # http://localhost:5173
 ```
 
 | 命令 | 作用 |
 |---|---|
 | `npm run shell` | 从本地终端连进这台机器（Ctrl-] 退出） |
-| `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件 |
+| `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件，加 `--machine workbench` 连进工作台 |
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
+| `npm run check:usb` | 给工作台插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
 | `RELAY=host:port npm run dev` | 开发服务器把 `/relay` 转给那里的中继（默认 127.0.0.1:8095，见 docs/relay.md） |
 | `npm run warp -- register` / `delete` | 注册或删除一个开发用的 WARP 设备，配合 `warp/examples/edge.rs` 直连入口（见 [docs/warp.md](docs/warp.md)） |
 | `WARP_EDGE=host:port npm run dev` | 本机连不上 WARP 入口时，让开发服务器走别的路径，比如一条 SSH 转发 |
 
-页面加 `?cold` 会冷启动内核，而不是恢复快照（调试用）。
+页面加 `?cold` 会冷启动内核，而不是恢复快照（调试用）；加 `?workbench` 直接开工作台。
 
 ## 怎么工作的
 
-**内核**（`image/kernel/`）。在 `allnoconfig` 上只开 v86 需要的东西：两个串口、virtio 控制台、经 virtio 走的 9p。全部编进内核，内核自己把浏览器提供的 9p 目录挂成根文件系统，不需要模块，也不需要 initramfs。编译在一次性的 Alpine 容器里进行，版本和源码校验和都固定。
+**内核**（`image/kernel/`）。在 `allnoconfig` 上只开 v86 需要的东西：两个串口、virtio 控制台、经 virtio 走的 9p，再加上工作台那块盘要的 IDE（`ata_piix`）、squashfs 和 overlayfs。全部编进内核，内核自己把浏览器提供的 9p 目录挂成根文件系统，不需要模块，也不需要 initramfs。编译在一次性的 Alpine 容器里进行，版本和源码校验和都固定。
 
 **镜像**（`scripts/build-image.ts`）。只用 Node：读 Alpine x86 仓库的索引，解出依赖，解包，叠上 `image/rootfs/` 和 `content/`，输出：
 
@@ -37,9 +38,11 @@ npm run dev            # http://localhost:5173
 
 **快照**（`scripts/build-state.ts`）。在 Node 里冷启动一次，先用一个一次性的会话把常用的东西预热进页缓存，再开一个全新会话、从第一个字节起录下终端输出。等它停在提示符时，整机存成快照，录下的输出另存。访客恢复快照后，页面回放这段输出，fish 已经在提示符等着了。
 
-**页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再列出机器的情况，进度条跟着真实的下载走；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。
+**页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再列出机器的情况，进度条跟着真实的下载走；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制。
 
 **联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。另一条路 `net warp` 用浏览器里的 Rust/wasm 客户端直连 Cloudflare WARP（试验，[docs/warp.md](docs/warp.md)）。
+
+**工作台**（`image/workbench/`，[docs/workbench.md](docs/workbench.md)）。客户机里敲 `workbench`，屏幕关掉，换一台 768 MB 的机器开起来，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim（LazyVim，每种语言的 LSP、格式化、调试），还有 adb 和 fastboot：经 WebUSB 连访客电脑上的手机，客户机里跑的是真正的 adb 和 fastboot。`home` 换回来。
 
 **排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点。输出到管道时仍然是原文。
 
@@ -66,10 +69,11 @@ npm run dev            # http://localhost:5173
 | 整个系统 | 623 个文件块，43 MB，压缩后 9.0 MB，全部按需加载 |
 | `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
 | `net warp` | 第一次 4 秒连上（含注册），之后 1.7 秒；客户机里下载 1.7 MB/s；WARP 客户端 brotli 后 111 KB，用到才加载 |
+| 工作台 | 快照 9.5 MB；工具链盘 758 MB，按需读取；`gcc hello.c` 6 秒，`rustc` 12 秒，`go run` 第一次 13 秒、之后 2 秒，`nvim` 载入全部插件 3 秒 |
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)（`net on`）和 [docs/warp.md](docs/warp.md)（`net warp`）。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)（`net on`）和 [docs/warp.md](docs/warp.md)（`net warp`）；工作台见 [docs/workbench.md](docs/workbench.md)。
 
 ## 踩过的坑
 
@@ -90,3 +94,12 @@ npm run dev            # http://localhost:5173
 - **xterm.js 6 留着一条原生滚动条**：它改用自己的滚动实现，样式表却仍给 `.xterm-viewport` 设了 `overflow-y: scroll`，Windows 上就一直画着一条原生滚动条，要 `scrollbar-width: none`。无头 Chrome 默认隐藏滚动条（`--hide-scrollbars`），截图里看不出来；检查滚动条时用 `ignoreDefaultArgs: ["--hide-scrollbars"]` 启动。
 - **xterm.js 6 自己涂背景**：底色不再画在 `.xterm-viewport` 上，而是以内联样式写在 `.xterm-scrollable-element` 上，要用 `!important` 去掉，显像管的渐变才透得出来。
 - **motion 的分属性过渡会整个替换默认过渡**：给某个属性单独写了 `transition`，外层的 `delay` 对它就不起作用了，延迟要写进每一个属性里。
+- **IDE 盘只认主盘**：v86 的 PIIX3 上，接在 `hdb` 的盘内核看不到，工具链盘要接 `hda`。
+- **v86 把每个 virtio 端口都说成控制台**：端口 1 到 3 于是都成了终端（hvc），它们的 `/dev/vport*` 打不开（ENXIO）。`src/machine.ts` 拦下 v86 对这几个端口发的这条消息，只有端口 0 是控制台；客户机开机时听到的是什么，快照就记住什么。
+- **virtio 端口的设备号不固定**：`/dev/vportNpM` 里的 N 是 virtio 设备的序号（这里是 2），不是控制台的。v86 给每个端口起了名字，`/etc/rc` 像 udev 那样建好 `/dev/virtio-ports/<名字>`，hostd 只用名字。
+- **v86 会丢 virtio 控制台的输入**：客户机没有空闲的接收缓冲时，送进去的字节直接扔掉；大段粘贴和 USB 数据都会丢。每个端口改为排队，等客户机有缓冲再送。
+- **lazy.nvim 在 i686 的 musl 上崩溃**：它经 LuaJIT 的 FFI 调 `clock_gettime`，按 32 位声明 `time_t`；musl 在 i686 上是 64 位，调用写出了结构体的边界，Neovim 随后崩掉。`image/workbench/nvim/init.lua` 改用 libuv 的 `getrusage` 计时。
+- **GCC 编不了大的 tree-sitter 解析器**：tree-sitter 编译时带 `-Wall`，其中的 `-Wuninitialized` 让 32 位的 cc1 在 3.3 MB 的 `parser.c`（gitcommit）上用光 4 GB 地址空间，`-w` 也没用。解析器改用 clang 编（550 MB）。
+- **LazyVim 会自己在后台装解析器**：插件一载入就开始编译；构建盘时 Neovim 退出了，编译器还在往缓存里写，下一条 `rm` 就失败，而且时好时坏。构建时用 `g:workbench_build` 让它只交出清单，解析器由单独的一个 Neovim 编。
+- **Go 说 `fmt is not in std`**：Go 给每个包目录的索引算哈希时，把文件的修改时间按本地时区格式化进去；客户机用的是访客的时区，构建时存下的索引永远对不上，Go 就要重建索引写回缓存，而缓存属于 root，写失败被当成“包不存在”。缓存改为属于访客。
+- **9p 的 `cache=loose` 看不到页面新加的文件**：客户机记得目录里有什么。拖进来的文件先放进一个它从没见过的目录，再由 hostd 改名搬进 `~/drop`。
