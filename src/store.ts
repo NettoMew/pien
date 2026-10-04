@@ -8,8 +8,6 @@ export interface MachineState {
   progress: number;
   /** The file that did not arrive. */
   missing?: string;
-  /** The window title the guest last set. */
-  title: string;
 }
 
-export const useMachine = create<MachineState>()(() => ({ phase: "loading", progress: 0, title: "" }));
+export const useMachine = create<MachineState>()(() => ({ phase: "loading", progress: 0 }));

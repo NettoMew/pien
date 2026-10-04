@@ -36,8 +36,6 @@ machine.emulator.add_listener("download-error", ({ file_name }) =>
   useMachine.setState({ phase: "failed", missing: file_name }),
 );
 
-term.onTitleChange((title) => useMachine.setState({ title: title.trim() }));
-
 // The guest's `open` and `net` print a private escape sequence; see open.fish, net.fish.
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
