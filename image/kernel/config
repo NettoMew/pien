@@ -4,7 +4,7 @@
 #
 # Applied on top of `allnoconfig` (see build.sh); anything not named here is off.
 
-CONFIG_LOCALVERSION="-home"
+CONFIG_LOCALVERSION="-arc"
 CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 CONFIG_KERNEL_XZ=y
 

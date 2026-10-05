@@ -13,5 +13,7 @@ export async function kernelBuild() {
   const config = await read("config");
   const key = createHash("sha256").update(script).update(config).digest("hex").slice(0, 12);
   const version = /^VERSION=(\S+)$/m.exec(script)?.[1] ?? "unknown";
-  return { script, config, version, file: join(ROOT, ".cache/kernel", `bzImage-${version}-${key}`) };
+  // What uname -r says: the version, and the config's suffix after it.
+  const release = version + (/^CONFIG_LOCALVERSION="([^"]*)"$/m.exec(config)?.[1] ?? "");
+  return { script, config, version, release, file: join(ROOT, ".cache/kernel", `bzImage-${version}-${key}`) };
 }

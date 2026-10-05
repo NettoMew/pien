@@ -139,12 +139,12 @@ rootfs.write("/usr/share/home/posts", posts.map((p) => p.join("\t") + "\n").join
 step("kernel");
 const kernel = await kernelBuild();
 if (!existsSync(kernel.file)) {
-  console.error(`No kernel built for this config yet: npm run build:kernel (KERNEL_HOST=<linux host> without local Docker)`);
+  console.error("No kernel built for this config yet: npm run build:kernel (BUILD_HOST=<linux host> without local Docker)");
   process.exit(1);
 }
 const bzimage = await readFile(kernel.file);
 const kernelFile = await putHashed("boot/bzimage", bzimage);
-info(`Linux ${kernel.version} · ${size(bzimage.length)}`);
+info(`Linux ${kernel.release} · ${size(bzimage.length)}`);
 
 // ─── BIOS ────────────────────────────────────────────────────────────────────
 
@@ -177,7 +177,7 @@ await writeManifest({
   hostname: config.hostname,
   arch: "i686",
   alpine,
-  kernel: kernel.version,
+  kernel: kernel.release,
   fish: release(repo.lookup("fish").version),
   // Exactly what went in: the workbench's disk is built against these.
   packages: Object.fromEntries(packages.map((pkg) => [pkg.name, pkg.version]).sort(([a], [b]) => a!.localeCompare(b!))),
