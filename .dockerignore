@@ -1,0 +1,6 @@
+# Images built from the repository's root (press/Dockerfile) take only what
+# they name here, not the gigabytes of build caches beside it.
+*
+!press/package.json
+!press/package-lock.json
+!press/src
