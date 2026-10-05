@@ -62,13 +62,15 @@ mkdir -p /run/drop
 echo none > /run/drop/state
 chmod 666 /run/drop/state
 
-# A phone on the visitor's USB, for adb and fastboot (see hostd). The state
-# files are the guest's to mark "waiting" in; hostd writes the rest.
+# The visitor's USB devices, over USB/IP (see hostd): what each port of the
+# console has lent, and how the latest ask for a device went, in a file the
+# guest marks "waiting" in; hostd writes the rest.
 mkdir -p /run/usb
-for tool in adb fastboot; do
-	echo off > "/run/usb/$tool"
-	chmod 666 "/run/usb/$tool"
+for port in 1 2 3; do
+	echo off > "/run/usb/$port"
 done
+echo off > /run/usb/state
+chmod 666 /run/usb/state
 
 # The guest's questions to the page (__ask.fish): hostd keeps the secret
 # they carry here, and writes the answers; only the guest may read them.

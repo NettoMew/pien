@@ -85,6 +85,8 @@ step("system");
 const alpine = release(repo.lookup("alpine-release").version);
 
 for (const dir of ["/dev", "/proc", "/sys", "/run", "/tmp", "/mnt"]) rootfs.mkdir(dir);
+// As Alpine's baselayout has it: the state programs keep while running (usbip's, say) is in /run.
+rootfs.symlink("/var/run", "../run");
 rootfs.mkdir("/root", { mode: 0o700 });
 
 const overlay = join(ROOT, "image/rootfs");

@@ -11,11 +11,13 @@
 #   usb key <private> <public> <name>
 #                    this browser's adb key, in base64: PKCS#8, and Android's
 #                    own form of its public half; adb signs with it
-#   usb up <tool> <serial> <name>
-#                    a phone is attached for adb or fastboot (src/usb/):
-#                    bridge it to where the tool is pointed
-#   usb down <tool> <why>
-#                    it went away, or was let go: take the bridge down
+#   usb attach <port> <busid> <name>
+#                    a USB device of the visitor's, offered over USB/IP
+#                    through that port of the console (src/usb/): attach it
+#   usb up <port>    the guest has configured it: give it to the visitor
+#   usb detach <port> <why>
+#                    it went away, or was let go: unplug it
+#   usb down <why>   no device was lent, as asked
 #   serial up <device> <name>
 #                    a serial port from the visitor's computer is attached
 #                    (src/serial/): /dev/<device> leads to it, ttyUSB0 for a
@@ -48,27 +50,51 @@ zone() {
 	echo "$1" > /etc/timezone
 }
 
-# adb and fastboot reach the phone as they would one on the network: adb at
-# 127.0.0.1:6555, fastboot at 127.0.0.1:6554 (their usual ports a thousand
-# up, clear of the range adb probes for emulators). From there the bytes go
-# through a port of the console to the page, and on to the phone.
-bridge() {
-	case $1 in
-	adb) set -- adb 6555 /dev/virtio-ports/virtio-1 ;;
-	fastboot) set -- fastboot 6554 /dev/virtio-ports/virtio-2 ;;
-	*) return 1 ;;
-	esac
-	[ -f "/run/usb/$1.pid" ] && return
-	# A session of its own, so the connections it forks go down with it; big
-	# blocks, for fewer trips through the emulated kernel.
-	setsid socat -b 65536 "TCP-LISTEN:$2,bind=127.0.0.1,reuseaddr,fork" "OPEN:$3" 2> /dev/null &
+# The visitor's USB devices reach the guest's vhci-hcd over USB/IP: `usbip
+# attach` connects to a usbipd over TCP and hands the connection to the
+# kernel. The usbipd here is the page, at the far end of a port of the
+# console, and socat joins the two, one connection to a port, at 127.0.0.1
+# 3241 to 3243. Unplugging is the connection closing.
+attach() { # <port> <busid> <name>
+	case $1 in 1 | 2 | 3) ;; *) return ;; esac
+	case $2 in "" | *[!0-9-]*) return ;; esac
+	detach "$1"
+	echo "attaching $2 $3" > "/run/usb/$1"
+	tcp=$((3240 + $1))
+	# A session of its own, so it goes down whole; big blocks, for fewer
+	# trips through the emulated kernel.
+	setsid socat -b 65536 "TCP-LISTEN:$tcp,bind=127.0.0.1,reuseaddr,nodelay" "OPEN:/dev/virtio-ports/virtio-$1" 2> /dev/null &
 	echo $! > "/run/usb/$1.pid"
+	# usbip has one try at it: socat must be listening first.
+	listening=$(printf ':%04X 00000000:0000 0A' "$tcp")
+	for i in $(seq 50); do
+		grep -q "$listening" /proc/net/tcp && break
+		sleep 0.05
+	done
+	why=$(usbip --tcp-port "$tcp" attach -r 127.0.0.1 -b "$2" 2>&1 > /dev/null) && return
+	detach "$1"
+	why=$(echo "$why" | grep error: | tail -n1)
+	echo "down error ${why:-usbip could not attach it}" > "/run/usb/$1"
+	echo "down error ${why:-usbip could not attach it}" > /run/usb/state
 }
 
-unbridge() {
+# Unplugging: socat's end of the connection closes, and the kernel lets the
+# device go, as from a cable pulled.
+detach() { # <port>
 	[ -f "/run/usb/$1.pid" ] || return
 	kill -- "-$(cat "/run/usb/$1.pid")" 2> /dev/null
 	rm -f "/run/usb/$1.pid"
+}
+
+# The guest has configured the device on <port>: its node is the visitor's
+# (devtmpfs makes USB nodes root's alone), and the ask for it is answered.
+lent() { # <port>
+	case $1 in 1 | 2 | 3) ;; *) return ;; esac
+	line=$(cat "/run/usb/$1")
+	case $line in attaching\ * | up\ *) ;; *) return ;; esac
+	chown guest /dev/bus/usb/*/* 2> /dev/null
+	echo "up ${line#* }" > "/run/usb/$1"
+	echo "up $1 ${line#* }" > /run/usb/state
 }
 
 # The key adb signs with, in the files adb reads it from; the phone shows
@@ -170,22 +196,29 @@ while read -r cmd arg; do
 		esac
 		;;
 	usb)
+		# A device names itself: the page keeps its name to printable ASCII,
+		# which may still hold a wildcard, so no word of it is expanded.
+		set -f
 		set -- $arg
+		set +f
 		case $1 in
 		key) adbkey "$2" "$3" "$4" ;;
-		up)
-			tool=$2
-			bridge "$tool"
+		attach)
+			port=$2 busid=$3
+			shift 3
+			attach "$port" "$busid" "$*"
+			;;
+		up) lent "$2" ;;
+		detach)
+			case $2 in 1 | 2 | 3) ;; *) continue ;; esac
+			detach "$2"
+			port=$2
 			shift 2
-			# adb's wrapper connects its server to the bridge; a phone back from
-			# a reboot is found again by the server itself, which keeps trying.
-			echo "up $*" > "/run/usb/$tool"
+			echo "down $*" > "/run/usb/$port"
 			;;
 		down)
-			tool=$2
-			unbridge "$tool"
-			shift 2
-			echo "down $*" > "/run/usb/$tool"
+			shift
+			echo "down $*" > /run/usb/state
 			;;
 		esac
 		;;

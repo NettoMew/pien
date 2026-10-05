@@ -1,10 +1,14 @@
-# Asks the page to lend the guest a device of the visitor's (serial, ble),
-# unless one is lent already, with what follows for the page to go by, and
-# prints the state it settles in: "up <device> <name>" or "down <why>". The
-# page answers through hostd, in /run/<what>/state.
-function __lend --argument-names what
+# Asks the page to lend the guest a device of the visitor's (serial, ble,
+# usb), with what follows for the page to go by, and prints the state it
+# settles in: "up …" or "down <why>". The page answers through hostd, in
+# /run/<what>/state. A serial port or a BLE device is one of a kind: one lent
+# already is the one, unasked. --again asks all the same, as for USB, where
+# what is lent may not be the kind wanted.
+function __lend
+    argparse again -- $argv; or return 1
+    set -l what $argv[1]
     read -l line </run/$what/state
-    if not string match -q 'up *' -- $line
+    if set -q _flag_again; or not string match -q 'up *' -- $line
         echo waiting >/run/$what/state
         # A private escape sequence: the page asks the browser for the device,
         # which the key that ran this lets it do, or else a tap on the key the

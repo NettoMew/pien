@@ -18,7 +18,7 @@ npm run dev            # http://localhost:5173
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
 | `npm run check:serial` | 给机器插几根假的串口线：一根 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍；一块停在 U-Boot `loady` 的板子，`sb` 往里传文件；一个蓝牙串口，走远再回来（见 [docs/serial.md](docs/serial.md)） |
 | `npm run check:ble` | 给机器几台假的蓝牙 LE 设备：Nordic UART、HM-10、自定的服务，经 `/dev/ttyBLE0` 往返字节，走远再回来（见 [docs/serial.md](docs/serial.md)） |
-| `npm run check:usb` | 给机器插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
+| `npm run check:usb` | 给机器插几台假 USB 设备，连描述符都有，客户机的内核经 USB/IP 枚举它们：一台手机给 adb 和 fastboot，一台 DFU 设备给 dfu-util（见 [docs/usb.md](docs/usb.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
 | `RELAY=host:port npm run dev` | 开发服务器把 `/relay` 转给那里的中继（默认 127.0.0.1:8095，见 docs/relay.md） |
@@ -53,7 +53,7 @@ npm run dev            # http://localhost:5173
 
 **编辑器**。nano，和 [Microsoft Edit](https://github.com/microsoft/edit)（`edit`，也叫 `msedit`）。Edit 不在 Alpine 的仓库里，`image/tools/edit/build.sh` 在 i686 的 Alpine 容器里从固定的版本编译它，链接客户机自己的 musl；查找替换要的 ICU 用到才读。
 
-**手机**。客户机里有真正的 adb 和 fastboot，经 WebUSB 连访客电脑上的手机（[docs/workbench.md](docs/workbench.md)）。
+**USB 设备**（`src/usb/`，[docs/usb.md](docs/usb.md)）。访客电脑上的 USB 设备经 USB/IP 交给客户机：页面是一个 usbipd，客户机内核里的 vhci-hcd 把设备当成插在自己身上的来枚举，adb、fastboot、dfu-util 照常用它们，用到时自己去借。
 
 **工作台**（`image/workbench/`，已封存）。一台 768 MB 的大机器，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim。
 
@@ -90,7 +90,7 @@ npm run dev            # http://localhost:5173
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)，登录见 [docs/login.md](docs/login.md)，写作见 [docs/writing.md](docs/writing.md)；串口见 [docs/serial.md](docs/serial.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)，登录见 [docs/login.md](docs/login.md)，写作见 [docs/writing.md](docs/writing.md)；串口见 [docs/serial.md](docs/serial.md)，USB 设备见 [docs/usb.md](docs/usb.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
 
 ## 踩过的坑
 
@@ -122,6 +122,9 @@ npm run dev            # http://localhost:5173
 - **9p 的 `cache=loose` 看不到页面新加的文件**：客户机记得目录里有什么。拖进来的文件先放进一个它从没见过的目录，再由 hostd 改名搬进 `~/drop`。
 - **fish 第一次启动会跑 Python**：fish 4 把从手册页生成补全的脚本编进了自己的二进制，第一次交互启动时只要有 python3 就在后台跑它，排除 `/usr/share/fish/tools` 也拦不住。镜像里没有手册页，这一趟白跑，还把 5 MB 的 libpython 留在快照里（home 的快照因此从 5.4 MB 涨到 6.8 MB）。`/etc/rc` 先建好它要填的目录 `~/.cache/fish/generated_completions`，它就不跑了。
 - **Web Serial 只在打开时收速度**：改速度、帧格式都得把串口关了再按新设置打开。客户机的 8250 驱动每次改完设置，最后一步都是在关上分频锁存的情况下写一次线路控制寄存器；页面在 v86 的这个寄存器字段上装了一个访问器，正好在这一刻知道该重开了，用不着轮询。
+- **USB/IP 慢得出奇**：推 8 MB 要 1.8 秒，原来的桥 0.3 秒。内核每个请求都等一个 48 字节的回答，socat 那一头的 TCP 没设 `nodelay`，这些小回答都被 Nagle 算法和延迟确认拖住。设上之后 0.34 秒。
+- **usbip 说 attach 失败，内核却已经接上了**：它最后要把连接记在 `/var/run/vhci_hcd` 里，镜像里没有 `/var/run`（那是 Alpine 的 baselayout 建的），记不下就报失败，hostd 只好又把设备拔掉。镜像里补上了 `/var/run` 指向 `/run`。
+- **拖进来的文件只能读一次**：客户机每次关上一个文件，v86 都叫存储 uncache 一次，不只是写的时候；页面原来一听到就把读法扔了，再读就去服务器上找一个并不存在的文件。客户机的页缓存常常挡在前面，内核大了一点、内存紧了才露出来。现在只在 inode 已经不在“别处”（写过了）时才扔。
 - **v86 的 UART 把收到的字节全攒着**：串口没有程序开着时，真的 16550 收满 16 字节的 FIFO 就丢，驱动打开时还会清空；v86 不管 FIFO 的清空位，收到多少攒多少，一台不停说话的设备能把内存攒满，下一个打开串口的程序先读到一大堆旧字节。页面看着 OUT2（驱动开着串口时拉高）：没人开着，字节就不往里送。
 - **内核不认第四个串口**：x86 上 COM4 的探测要做回环测试，COM1 到 COM3 都跳过。v86 的 UART 回环只回字节、不把 DTR、RTS 回到 CTS、DSR 上，测试不过，ttyS3 的节点在、口却是空的。`/etc/rc` 用 `setserial /dev/ttyS3 uart 16550A` 告诉它。
 - **16550 的速度只到 115200**：默认时钟除以 16 再除以分频，分频最小是 1。`/etc/rc` 用 `setserial` 把 ttyS2 的时钟调高到 24 MHz（除以 16 之后），1500000、3000000 都成了整数分频；差一点点的（115200 这类）由页面对回标准速度。

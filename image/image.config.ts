@@ -9,9 +9,11 @@ export default {
 
   packages: [
     "busybox", "busybox-binsh", "fish", "fastfetch", "htop", "tree", "curl", "ssl_client", "openssh-client-default", "mtr", "tzdata",
-    // A phone on the visitor's USB (src/usb/), on either machine. Alpine's adb
-    // and fastboot bring python3 along.
-    "android-tools-adb", "android-tools-fastboot", "socat",
+    // The visitor's USB devices, over USB/IP (src/usb/): usbip attaches them,
+    // socat carries them through the console, lsusb lists them. What talks
+    // to them: a phone's adb and fastboot, and dfu-util, for firmware.
+    "usbip-utils", "socat", "usbutils",
+    "android-tools-adb", "android-tools-fastboot", "dfu-util",
     // A serial port from the visitor's computer (src/serial/), a terminal for
     // it, and what flashes the boards at its other end: STM32s through their
     // ROM bootloader, and AVRs. Built apart (image/tools/): lrzsz, for U-Boot's

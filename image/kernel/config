@@ -1,6 +1,7 @@
-# The guest kernel: just enough for v86 — three serial lines, the virtio
-# console, and a root filesystem served over 9p. Everything is built in, so
-# the kernel mounts its root itself: no modules, no initramfs.
+# The guest kernel: just enough for v86 — four serial lines, the virtio
+# console, a root filesystem served over 9p, and the visitor's USB devices
+# over USB/IP. Everything is built in, so the kernel mounts its root itself:
+# no modules, no initramfs.
 #
 # Applied on top of `allnoconfig` (see build.sh); anything not named here is off.
 
@@ -90,3 +91,13 @@ CONFIG_MISC_FILESYSTEMS=y
 CONFIG_SQUASHFS=y
 CONFIG_SQUASHFS_ZSTD=y
 CONFIG_OVERLAY_FS=y
+# The visitor's USB devices (src/usb/usbip.ts): the USB core, and USB/IP's
+# virtual host controller, which takes its devices over a socket from the
+# page, a usbipd of sorts. No drivers of classes: the tools reach the
+# devices themselves, through usbfs
+CONFIG_USB_SUPPORT=y
+CONFIG_USB=y
+CONFIG_USBIP_CORE=y
+CONFIG_USBIP_VHCI_HCD=y
+CONFIG_USBIP_VHCI_HC_PORTS=8
+CONFIG_USBIP_VHCI_NR_HCS=1

@@ -1,89 +1,152 @@
-// The phone's side: WebUSB. A tool asks for a phone; this takes one the
-// visitor has let the site use before, or has the browser offer the choice,
-// claims the interface the tool speaks — adb's, or the bootloader's fastboot
-// — and joins it to that tool's port. A phone that goes away and comes back
-// (a reboot, into the bootloader or out of it) is taken again for the tools
-// that have asked, as on any desk.
+// The visitor's USB devices, lent to the guest over USB/IP (usbip.ts), each
+// on a port of the console of its own: three at a time. A tool, or `usb
+// attach`, asks for a device of a kind, by its vendor or its class; this
+// takes one the visitor has let the site use before, or has the browser
+// offer the choice, and hostd attaches it. From then on the guest's kernel
+// has the device as if it were plugged in, and adb, fastboot, dfu-util and
+// the rest find it as they would on any computer. A device that goes away
+// and comes back as itself (a reboot, a reset) is lent again by itself, as
+// on any desk; one that comes back as another device is the browser's to
+// offer, and the visitor's to choose.
 
-import { AdbDaemonWebUsbDevice, matchFilters } from "@yume-chan/adb-daemon-webusb";
 import { Usb } from "lucide-react";
 import { gesture } from "../gesture.ts";
 import type { Machine, PortNumber } from "../machine.ts";
-import * as adb from "./adb.ts";
-import * as fastboot from "./fastboot.ts";
-import type { Tool } from "./index.ts";
 import { adbKey } from "./key.ts";
+import { Session } from "./usbip.ts";
 
-/** The interfaces the tools speak, as Google defines them. */
-const INTERFACES = {
-  adb: { classCode: 0xff, subclassCode: 0x42, protocolCode: 0x01 },
-  fastboot: { classCode: 0xff, subclassCode: 0x42, protocolCode: 0x03 },
-} as const satisfies Record<Tool, USBDeviceFilter>;
+/** The console's ports a device may be lent on: /dev/virtio-ports/virtio-1 to -3 in the guest. */
+const PORTS = [1, 2, 3] as const satisfies PortNumber[];
+type Lane = (typeof PORTS)[number];
 
-const TOOLS = Object.keys(INTERFACES) as Tool[];
+/** adb's interface, as Google defines it: a device with it gets this browser's adb key first. */
+const ADB = { classCode: 0xff, subclassCode: 0x42, protocolCode: 0x01 };
 
-/** /dev/virtio-ports/virtio-1 and -2 in the guest; hostd bridges them to the tools. */
-const PORTS = { adb: 1, fastboot: 2 } as const satisfies Record<Tool, PortNumber>;
+const sessions = new Map<Lane, Session>();
 
-const PROTOCOLS = { adb, fastboot };
+/** The machine the devices are lent to, while it wants them. */
+let lending: Machine | undefined;
 
-/** A phone joined to a tool's port. */
-export interface Link {
-  readonly device: USBDevice;
-  close(): Promise<void>;
+/** The devices lent this visit, by what makes each itself: one that comes back is lent again. */
+const lent = new Set<string>();
+
+/** Bus IDs, as the guest's `usbip` asks for a device: one bus, a number for each device lent. */
+let lendings = 0;
+
+/**
+ * The kind of device the guest asked for: filters, each `vvvv[:pppp]`, a
+ * vendor and maybe its product, or `cc[/ss[/pp]]`, a class and maybe its
+ * subclass and protocol, all in hex; none, for any device at all.
+ */
+export function kinds(asked: string): USBDeviceFilter[] | undefined {
+  const filters: USBDeviceFilter[] = [];
+  for (const word of asked.split(/\s+/).filter(Boolean)) {
+    const vendor = /^([0-9a-f]{4})(?::([0-9a-f]{4}))?$/i.exec(word);
+    const kind = /^([0-9a-f]{2})(?:\/([0-9a-f]{2})(?:\/([0-9a-f]{2}))?)?$/i.exec(word);
+    const hex = (digits: string | undefined) => (digits === undefined ? undefined : parseInt(digits, 16));
+    if (vendor) filters.push({ vendorId: hex(vendor[1]), productId: hex(vendor[2]) });
+    else if (kind) filters.push({ classCode: hex(kind[1]), subclassCode: hex(kind[2]), protocolCode: hex(kind[3]) });
+    else return undefined;
+  }
+  return filters.map((filter) => Object.fromEntries(Object.entries(filter).filter(([, value]) => value !== undefined)));
 }
 
-/** What a link calls when its transfers fail. */
-export type Broken = (error: unknown) => void;
+/** Whether `device` is of a kind in `filters`, by itself or by one of its interfaces; any device, for none. */
+function matches(device: USBDevice, filters: USBDeviceFilter[]) {
+  const interfaces = device.configurations.flatMap(({ interfaces }) => interfaces.flatMap(({ alternates }) => alternates));
+  const classes = [
+    { classCode: device.deviceClass, subclassCode: device.deviceSubclass, protocolCode: device.deviceProtocol },
+    ...interfaces.map(({ interfaceClass, interfaceSubclass, interfaceProtocol }) => ({ classCode: interfaceClass, subclassCode: interfaceSubclass, protocolCode: interfaceProtocol })),
+  ];
+  return (
+    !filters.length ||
+    filters.some(
+      (filter) =>
+        (filter.vendorId === undefined || filter.vendorId === device.vendorId) &&
+        (filter.productId === undefined || filter.productId === device.productId) &&
+        (filter.serialNumber === undefined || filter.serialNumber === device.serialNumber) &&
+        classes.some(
+          (kind) =>
+            (filter.classCode === undefined || filter.classCode === kind.classCode) &&
+            (filter.subclassCode === undefined || filter.subclassCode === kind.subclassCode) &&
+            (filter.protocolCode === undefined || filter.protocolCode === kind.protocolCode),
+        ),
+    )
+  );
+}
 
-const links = new Map<Tool, Link>();
+/** What makes a device itself, as the browser keeps its permission: vendor, product and serial number. */
+const itself = (device: USBDevice) => `${device.vendorId}:${device.productId}:${device.serialNumber ?? ""}`;
 
-/** The machine whose tools asked for a phone, and which tools did. */
-let asking: { machine: Machine; tools: Set<Tool> } | undefined;
-
-export async function attach(tool: Tool, machine: Machine) {
+/** Lends the guest a device of the kind asked for: one lent already, one the site may use, or one the visitor chooses. */
+export async function attach(machine: Machine, asked: string) {
   const usb = navigator.usb as USB | undefined;
-  if (!usb) return down(machine, tool, "unsupported");
+  if (!usb) return down(machine, "unsupported");
+  const filters = kinds(asked);
+  if (!filters) return down(machine, "invalid");
   watch(usb);
-  if (asking?.machine !== machine) asking = { machine, tools: new Set() };
-  asking.tools.add(tool);
+  lending = machine;
 
-  const link = links.get(tool);
-  if (link) return up(machine, tool, link.device);
+  const already = [...sessions].find(([, session]) => matches(session.device, filters));
+  if (already) return machine.control(`usb up ${already[0]}`);
+  if (!PORTS.some((lane) => !sessions.has(lane))) return down(machine, "full");
 
-  let device = (await usb.getDevices()).find((device) => matchFilters(device, [INTERFACES[tool]]));
+  const free = (device: USBDevice) => ![...sessions.values()].some((session) => session.device === device);
+  let device = (await usb.getDevices()).find((device) => free(device) && matches(device, filters));
   if (!device) {
     try {
       // The browser lists devices only as the visitor touches the page.
-      device = await gesture("Choose a phone", Usb, () => usb.requestDevice({ filters: Object.values(INTERFACES) }));
+      device = await gesture("Choose a USB device", Usb, () => usb.requestDevice({ filters }));
     } catch {
-      return down(machine, tool, "cancelled");
+      return down(machine, "cancelled");
     }
+    const chosen = device;
+    const lane = [...sessions].find(([, session]) => session.device === chosen)?.[0];
+    if (lane) return machine.control(`usb up ${lane}`);
   }
-  await join(tool, device, machine);
+  await lend(device, machine);
 }
 
-/** Lets go of every phone: for `usb off`, saying so, or quietly as the machine goes. */
+/** Lets go of every device: for `usb off`, saying so, or quietly as the machine goes. */
 export async function release(machine?: Machine) {
-  asking = undefined;
-  for (const tool of [...links.keys()]) await drop(tool);
-  if (machine) for (const tool of TOOLS) down(machine, tool, "off");
+  lending = undefined;
+  lent.clear();
+  for (const lane of [...sessions.keys()]) await drop(lane, machine, "off");
+  if (machine) down(machine, "off");
 }
 
-async function join(tool: Tool, device: USBDevice, machine: Machine) {
-  const found = matchFilters(device, [INTERFACES[tool]]);
-  if (!found) return down(machine, tool, "mode");
-  let link: Link | undefined;
+async function lend(device: USBDevice, machine: Machine) {
+  const lane = PORTS.find((lane) => !sessions.has(lane));
+  if (!lane) return down(machine, "full");
   try {
-    link = await PROTOCOLS[tool].open(device, found, machine.port(PORTS[tool]), (error) => broken(tool, link, error));
+    await device.open();
+    if (!device.configuration) await device.selectConfiguration(device.configurations[0]!.configurationValue);
   } catch (error) {
-    // Claiming the interface fails so when another program has it.
-    const busy = error instanceof AdbDaemonWebUsbDevice.DeviceBusyError || named(error, "NetworkError");
-    return down(machine, tool, busy ? "busy" : `error ${describe(error)}`);
+    await device.close().catch(() => {});
+    // Opening fails so when another program on this computer has the device.
+    return down(machine, named(error, "SecurityError") || named(error, "NetworkError") || named(error, "InvalidStateError") ? "busy" : `error ${describe(error)}`);
   }
-  links.set(tool, link);
-  if (tool === "adb") await introduce(machine);
-  up(machine, tool, device);
+  const busid = `1-${++lendings}`;
+  const session: Session = new Session(device, busid, machine.port(lane), {
+    configured: () => machine.control(`usb up ${lane}`),
+    broken: (error) => {
+      if (sessions.get(lane) === session) void drop(lane, machine, `error ${describe(error)}`);
+    },
+  });
+  sessions.set(lane, session);
+  lent.add(itself(device));
+  if (matches(device, [ADB])) await introduce(machine);
+  machine.control(`usb attach ${lane} ${busid} ${nameOf(device)}`);
+}
+
+/** Takes a device back from the guest, which sees it unplugged, and tells it why; quietly, without a machine to tell. */
+async function drop(lane: Lane, machine: Machine | undefined, why: string) {
+  const session = sessions.get(lane);
+  if (!session) return;
+  sessions.delete(lane);
+  session.close();
+  await session.device.close().catch(() => {});
+  machine?.control(`usb detach ${lane} ${why}`);
 }
 
 /** The machines that have this browser's adb key: adb reads it as its server starts. */
@@ -91,8 +154,8 @@ const keyed = new WeakSet<Machine>();
 
 /**
  * Hands the guest this browser's adb key, made the first time a phone is
- * used at all. Without storage to keep one in, adb makes its own, for this
- * visit only.
+ * used at all, so a phone that has allowed this browser once allows it
+ * again. Without storage to keep one in, adb makes its own, for this visit.
  */
 async function introduce(machine: Machine) {
   if (keyed.has(machine)) return;
@@ -105,51 +168,28 @@ async function introduce(machine: Machine) {
   }
 }
 
-async function drop(tool: Tool, why?: string) {
-  const link = links.get(tool);
-  if (!link) return;
-  links.delete(tool);
-  await link.close();
-  if (why && asking) down(asking.machine, tool, why);
-}
-
-/**
- * A transfer failed. If the phone was unplugged, the disconnect event says
- * so in a moment (on Windows the transfer fails first); anything else is an
- * error.
- */
-function broken(tool: Tool, link: Link | undefined, error: unknown) {
-  setTimeout(() => {
-    if (link && links.get(tool) === link) void drop(tool, `error ${describe(error)}`);
-  }, 200);
-}
-
 let watching = false;
 
 function watch(usb: USB) {
   if (watching) return;
   watching = true;
   usb.addEventListener("disconnect", ({ device }) => {
-    for (const [tool, link] of links) if (link.device === device) void drop(tool, "gone");
+    for (const [lane, session] of sessions) if (session.device === device) void drop(lane, lending, "gone");
   });
   usb.addEventListener("connect", ({ device }) => {
-    if (!asking) return;
-    for (const tool of asking.tools) {
-      if (!links.has(tool) && matchFilters(device, [INTERFACES[tool]])) void join(tool, device, asking.machine);
-    }
+    if (lending && lent.has(itself(device)) && ![...sessions.values()].some((session) => session.device === device)) void lend(device, lending);
   });
 }
 
-/** Tells hostd: usb up <tool> <serial> <name>, both safe for the control line. */
-function up(machine: Machine, tool: Tool, device: USBDevice) {
-  const plain = (text: string | null | undefined) => (text ?? "").replace(/[^\x21-\x7e]+/g, " ").trim();
+/** The device's name for the guest, as safe for the control line as its IDs: a device names itself. */
+function nameOf(device: USBDevice) {
+  const plain = (text: string | null | undefined) => (text ?? "").replace(/[^\x21-\x7e]+/g, " ").trim().slice(0, 64);
   const hex = (n: number) => n.toString(16).padStart(4, "0");
-  const serial = plain(device.serialNumber).replace(/ /g, "_") || `${hex(device.vendorId)}:${hex(device.productId)}`;
-  machine.control(`usb up ${tool} ${serial} ${plain(device.productName) || "phone"}`);
+  return `${plain(device.productName) || "USB device"} (${hex(device.vendorId)}:${hex(device.productId)})`;
 }
 
-function down(machine: Machine, tool: Tool, why: string) {
-  machine.control(`usb down ${tool} ${why}`);
+function down(machine: Machine, why: string) {
+  machine.control(`usb down ${why}`);
 }
 
 function named(error: unknown, name: string) {

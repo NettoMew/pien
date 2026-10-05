@@ -32,7 +32,7 @@ guest@zutto-issho ~> workbench
 | Python | python 3.14、pip、ruff、pyright、debugpy |
 | JavaScript | node 24、npm、vtsls、vscode-langservers-extracted、yaml-language-server、bash-language-server、prettier、markdownlint-cli2 |
 | 编辑器 | Neovim 0.12 + LazyVim：41 个插件、38 个 tree-sitter 解析器，上面每种语言的 LSP、格式化和调试（gdb、debugpy）都配好了 |
-| Android | android-tools 35 的其余工具：mkbootimg、avbtool、img2simg、lpmake 等。adb 和 fastboot 两台机器上都有，见下文 |
+| Android | android-tools 35 的其余工具：mkbootimg、avbtool、img2simg、lpmake 等。adb 和 fastboot 两台机器上都有，见 [docs/usb.md](usb.md) |
 | 其他 | git、tig、lazygit、ripgrep、fd、fzf、tmux、bash、jq、yq、sqlite、zip、zstd、openssl |
 
 ## 怎么做的
@@ -68,33 +68,7 @@ guest@zutto-issho ~> workbench
 
 ## 手机：adb 和 fastboot
 
-adb 和 fastboot 在基础镜像里，home 和工作台上都有；Alpine 的这两个包连带装上了 python3，按需下载，不用就不占地方。
-
-```
-adb / fastboot ──TCP──▶ socat（hostd 启动）──▶ /dev/virtio-ports/virtio-1、-2 ──▶ v86
-   ──▶ 页面 src/usb/ ──WebUSB──▶ 手机
-```
-
-客户机里跑的是真正的 adb 和 fastboot。它们把手机当成网络上的设备：adb 在 `127.0.0.1:6555`，fastboot 在 `127.0.0.1:6554`（通常的端口加一千，避开 adb 自己探测模拟器的那一段）。hostd 用 socat 把这两个地址接到 virtio 控制台的两个端口上，页面在另一头把字节交给 WebUSB。
-
-- **adb**：网络上的 adb 和 USB 上的 adb 是同一种数据包，24 字节的头加上载荷，只是 USB 上头和载荷各占一次传输。页面一个包一个包地原样转过去，校验和也不动；USB 那一侧（认接口、分两次传、整包长度时补一个零长度包、Windows 上先报错后断开）交给 Tango（`@yume-chan/adb-daemon-webusb`）。
-- **fastboot**：网络上是先互发 `FB01` 握手，然后每条消息带 8 字节大端长度；USB 上是裸传输，一条命令一次，一个回应一次，下载的数据可以分成任意大小的块。页面在两者之间转换（`src/usb/fastboot.ts`）。
-- **选手机**：第一次由浏览器弹出列表让访客选，需要一次按键带来的"用户激活"，敲回车运行命令正好就是。选过的手机之后直接用。手机重启、进出 bootloader 后回来时，页面自动重新接上；bootloader 模式往往是另一个 USB 身份，第一次要再选一次。
-- **密钥**：每个浏览器一把 RSA 密钥，Tango 的凭据存储把它放在 IndexedDB 里，名字是 `guest@<站点>`。第一次接上手机时，页面把它交给 hostd，写进 `~/.android/adbkey`；手机上勾过"始终允许"，刷新页面后也不用再确认。浏览器存不了时，adb 自己生成一把，只用这一次。
-- **不丢、不堆**：v86 在客户机没有空闲接收缓冲时会直接丢掉送进来的字节，所以每个端口有自己的队列，等客户机有缓冲再送（`Port`，`src/machine.ts`）。反过来，客户机写得比 USB 快时，页面暂时不取它的输出，客户机的写入就会阻塞，和真的线路一样。
-- `usb` 看现在接着什么，`usb off` 放开手机，好让这台电脑自己的工具用。
-
-只有 Chromium 系的浏览器有 WebUSB（Chrome、Edge，电脑和 Android 上都有）。电脑上自己的 adb server 正占着手机时，接口认领会失败，要先在那边 `adb kill-server`。Windows 上手机需要 WinUSB 驱动（Google USB Driver 就是）。
-
-没有手机也能测：`npm run check:usb` 用一台假手机（一个小 adbd、一个小 bootloader，冒充 WebUSB 设备）把整条路走一遍，默认在 home 上，`npm run check:usb -- workbench` 换工作台。页面这一侧用的就是 `src/usb/` 本身，连浏览器保存的密钥也是：IndexedDB 由 fake-indexeddb 代替。它在 Node 里跑，用一个无头的 xterm.js 代替页面上的终端，结果大致是：
-
-| 假手机上 | |
-|---|---|
-| `adb shell cat`，4 MB，连同客户机里的 md5sum | 1.6 秒 |
-| `adb push`，8 MB | 0.7 秒 |
-| `fastboot stage` 一个拖进来的 16 MB 文件 | 0.2 秒 |
-
-真手机还要加上 USB 本身的时间。
+手机和别的 USB 设备一样，经 USB/IP 交给客户机，两台机器上都有，见 [docs/usb.md](usb.md)。
 
 ## 拖进文件
 

@@ -42,7 +42,7 @@ term.parser.registerOscHandler(7337, (data) => {
   if (verb === "open") openLink(rest.join(";"));
   if (verb === "net" && machine) void net(rest[0] ?? "", machine);
   if (verb === "ask" && machine) void ask(rest, machine);
-  if (verb === "usb" && machine) void usb(rest[0] ?? "", machine);
+  if (verb === "usb" && machine) void usb(rest[0] ?? "", machine, rest[1]);
   if (verb === "serial" && machine) void serial(rest[0] ?? "", machine, rest[1]);
   if (verb === "ble" && machine) void ble(rest[0] ?? "", machine, rest[1]);
   if (verb === "drop" && machine) pick(machine);

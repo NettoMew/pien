@@ -1,19 +1,17 @@
 function adb --wraps adb --description "Android Debug Bridge, to a phone on this computer's USB"
-    # These never talk to a device.
+    # These never talk to a phone.
     switch "$argv[1]"
-        case '' version help --help --version keygen pubkey start-server kill-server disconnect
+        case '' version help --help --version keygen pubkey start-server kill-server connect disconnect
             command adb $argv
             return
     end
-    __usb adb; or return 1
-    # hostd introduces the phone to the adb server too; this makes sure the
-    # server knows it, and has finished shaking hands with it, before the
-    # command runs. A phone waiting for its owner to allow this computer
-    # stays "unauthorized", and adb says so, as on any desk.
-    command adb connect 127.0.0.1:6555 >/dev/null
+    __usb_device ff/42/01; or return 1
+    # adb's server finds a phone on USB a moment after it is plugged in, and
+    # then shakes hands with it: this waits until it has, so the command
+    # finds it. A phone waiting for its owner to allow this computer stays
+    # "unauthorized", and adb says so, as on any desk.
     for i in (seq 50)
-        command adb -s 127.0.0.1:6555 get-state 2>&1 | string match -qr 'offline|connecting|authorizing'
-        or break
+        command adb devices 2>/dev/null | string match -qr '\t(device|unauthorized|recovery|rescue|sideload)$'; and break
         sleep 0.1
     end
     command adb $argv

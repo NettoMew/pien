@@ -97,7 +97,8 @@ export default defineConfig({
     // Nearly everything is needed up front, but the libraries change far less
     // often than the page, and the machine's (v86, xterm.js) on another clock
     // than the interface's: each set in a chunk of its own stays cached
-    // across releases of the others. USB's (Tango) waits for the first phone.
+    // across releases of the others. The adb key's (Tango's) waits for the
+    // first USB device.
     rolldownOptions: {
       input: { index: "index.html", blog: BLOG_CSS },
       output: {

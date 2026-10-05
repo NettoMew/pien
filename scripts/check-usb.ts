@@ -1,17 +1,21 @@
-// Puts a pretend phone on a machine's USB and runs the guest's own adb and
-// fastboot against it, through the page's bridge (src/usb/) just as a
-// browser runs it. Only WebUSB and IndexedDB are pretended: the phone stands
-// in for the browser's device, with a small adbd and a small bootloader
-// behind it, and fake-indexeddb keeps the browser's adb key.
+// Puts pretend USB devices on a machine and runs the guest's own tools
+// against them, over USB/IP, through the page's usbipd (src/usb/) just as a
+// browser runs it. Only WebUSB and IndexedDB are pretended: each device
+// answers as a real one would, down to its descriptors, so the guest's
+// kernel enumerates it; a phone runs a small adbd, then a small bootloader,
+// and a third device is a DFU bootloader. fake-indexeddb keeps the
+// browser's adb key.
 //
 //   npm run check:usb                  the home machine
 //   npm run check:usb -- workbench
 //
-// Checked: the browser's key reaching adb (the phone verifies adb's
-// signature with the key the browser keeps), a shell, a large read and a
-// large push, a reboot into the bootloader with the phone coming back as
-// another device, and fastboot there: a variable, and the download of a file
-// dropped onto the page.
+// Checked: the phone lent and enumerated, the browser's key reaching adb
+// (the phone verifies adb's signature with the key the browser keeps), a
+// shell, a large read and a large push; a reboot into the bootloader, the
+// phone coming back as another device, and fastboot there: a variable, and
+// the download of a file dropped onto the page; a device that comes back as
+// itself, lent again unasked; dfu-util's download and upload, with a device
+// the visitor chooses; letting go.
 
 import "fake-indexeddb/auto";
 import { constants, createHash, createPrivateKey, createPublicKey, type KeyObject, publicDecrypt, randomBytes } from "node:crypto";
@@ -24,76 +28,164 @@ import { info, size, step } from "./lib/log.ts";
 
 const md5 = (bytes: Uint8Array) => createHash("md5").update(bytes).digest("hex");
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+const view = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-// The phone ---------------------------------------------------------------
+// A device -----------------------------------------------------------------
 
-type Mode = "adb" | "fastboot";
-
-interface Firmware {
-  receive(transfer: Uint8Array<ArrayBuffer>): void;
+interface InterfaceSpec {
+  class: number;
+  subclass: number;
+  protocol: number;
+  name?: string;
+  /** Bulk endpoints, by number: one each way. */
+  bulk?: number;
+  /** Class descriptors after the interface's, such as DFU's functional one. */
+  extra?: Uint8Array;
 }
 
-/** The parts of a WebUSB device the bridge and Tango use, one interface, two bulk endpoints. */
-class Phone {
-  readonly vendorId = 0x18d1;
+interface DeviceSpec {
+  vendorId: number;
+  productId: number;
+  manufacturerName: string;
+  productName: string;
+  serialNumber: string;
+  interfaces: InterfaceSpec[];
+}
+
+/** What a device does past its descriptors: its own requests, and the bytes that come to it. */
+interface Firmware {
+  /** A class or vendor request on the control endpoint: what to read back, true for done, or undefined for a stall. */
+  control?(setup: USBControlTransferParameters, data: Uint8Array, length: number): Uint8Array | true | undefined;
+  receive?(transfer: Uint8Array<ArrayBuffer>): void;
+}
+
+const GET_DESCRIPTOR = 6;
+const [DEVICE, CONFIGURATION, STRING] = [1, 2, 3];
+const BULK_PACKET = 512;
+
+/**
+ * A device as WebUSB shows one, and as a USB device answers: its
+ * descriptors, standard requests, and bulk endpoints for its firmware.
+ */
+class Device {
+  readonly vendorId: number;
   readonly productId: number;
-  readonly serialNumber = "PRETEND01";
-  readonly productName = "Pretend Phone";
-  readonly configurations;
+  readonly manufacturerName: string;
+  readonly productName: string;
+  readonly serialNumber: string;
+  readonly deviceClass = 0;
+  readonly deviceSubclass = 0;
+  readonly deviceProtocol = 0;
+  readonly usbVersionMajor = 2;
+  readonly usbVersionMinor = 0;
+  readonly usbVersionSubminor = 0;
+  readonly deviceVersionMajor = 1;
+  readonly deviceVersionMinor = 0;
+  readonly deviceVersionSubminor = 0;
+  readonly configurations: USBConfiguration[];
+  configuration: USBConfiguration | null = null;
   opened = false;
-  configuration: unknown = null;
   firmware?: Firmware;
-  private readonly interface;
+  /** Every configuration the guest set, and every standard request it made, in order. */
+  readonly asked: string[] = [];
+  private readonly spec: DeviceSpec;
+  private readonly strings: string[];
   private readonly transfers: Uint8Array[] = [];
   private reading?: (transfer?: Uint8Array) => void;
 
-  constructor(mode: Mode) {
-    this.productId = mode === "adb" ? 0x4ee7 : 0x4ee0;
-    const endpoints = (["in", "out"] as const).map((direction) => ({ endpointNumber: 1, direction, type: "bulk", packetSize: 512 }));
-    const alternate = {
-      alternateSetting: 0,
-      interfaceClass: 0xff,
-      interfaceSubclass: 0x42,
-      interfaceProtocol: mode === "adb" ? 1 : 3,
-      interfaceName: null,
-      endpoints,
-    };
-    this.interface = { interfaceNumber: 0, claimed: false, alternate, alternates: [alternate] };
-    this.configurations = [{ configurationValue: 1, configurationName: null, interfaces: [this.interface] }];
+  constructor(spec: DeviceSpec) {
+    this.spec = spec;
+    ({ vendorId: this.vendorId, productId: this.productId, manufacturerName: this.manufacturerName, productName: this.productName, serialNumber: this.serialNumber } = spec);
+    this.strings = [spec.manufacturerName, spec.productName, spec.serialNumber, ...spec.interfaces.map(({ name }) => name ?? "")];
+    const interfaces = spec.interfaces.map((one, interfaceNumber): USBInterface => {
+      const endpoints: USBEndpoint[] = one.bulk
+        ? (["in", "out"] as const).map((direction) => ({ endpointNumber: one.bulk!, direction, type: "bulk", packetSize: BULK_PACKET }))
+        : [];
+      const alternate: USBAlternateInterface = {
+        alternateSetting: 0,
+        interfaceClass: one.class,
+        interfaceSubclass: one.subclass,
+        interfaceProtocol: one.protocol,
+        interfaceName: one.name ?? null,
+        endpoints,
+      };
+      return { interfaceNumber, alternate, alternates: [alternate], claimed: false };
+    });
+    this.configurations = [{ configurationValue: 1, configurationName: null, interfaces }];
+  }
+
+  /** The descriptor the guest asks for, as the device keeps it. */
+  private descriptor(type: number, index: number): Uint8Array | undefined {
+    const word = (n: number) => [n & 0xff, n >> 8];
+    if (type === DEVICE) {
+      return Uint8Array.of(18, DEVICE, ...word(0x0200), 0, 0, 0, 64, ...word(this.vendorId), ...word(this.productId), ...word(0x0100), 1, 2, 3, 1);
+    }
+    if (type === CONFIGURATION && index === 0) {
+      const body = this.spec.interfaces.flatMap((one, number) => [
+        ...[9, 4, number, 0, one.bulk ? 2 : 0, one.class, one.subclass, one.protocol, one.name ? 4 + number : 0],
+        ...(one.extra ?? []),
+        ...(one.bulk ? [7, 5, 0x80 | one.bulk, 2, ...word(BULK_PACKET), 0, 7, 5, one.bulk, 2, ...word(BULK_PACKET), 0] : []),
+      ]);
+      return Uint8Array.of(9, CONFIGURATION, ...word(9 + body.length), this.spec.interfaces.length, 1, 0, 0x80, 250, ...body);
+    }
+    if (type === STRING && index === 0) return Uint8Array.of(4, STRING, 0x09, 0x04);
+    const string = type === STRING ? this.strings[index - 1] : undefined;
+    if (!string) return undefined;
+    const utf16 = new Uint8Array(Buffer.from(string, "utf16le"));
+    return Uint8Array.of(2 + utf16.length, STRING, ...utf16);
   }
 
   async open() {
     this.opened = true;
-    this.configuration = this.configurations[0];
   }
   async close() {
     this.opened = false;
-    this.interface.claimed = false;
+    for (const one of this.configuration?.interfaces ?? []) Object.assign(one, { claimed: false });
     this.reading?.();
   }
-  async claimInterface() {
-    this.interface.claimed = true;
+  async selectConfiguration(value: number) {
+    this.asked.push(`configuration ${value}`);
+    this.configuration = this.configurations.find(({ configurationValue }) => configurationValue === value) ?? null;
   }
-  async releaseInterface() {
-    this.interface.claimed = false;
+  async claimInterface(number: number) {
+    Object.assign(this.configuration!.interfaces[number]!, { claimed: true });
   }
-  async selectConfiguration() {}
+  async releaseInterface(number: number) {
+    Object.assign(this.configuration!.interfaces[number]!, { claimed: false });
+  }
   async selectAlternateInterface() {}
   async clearHalt() {}
+  async reset() {}
+  async forget() {}
 
-  async transferOut(_endpoint: number, data: ArrayBufferView) {
+  async controlTransferIn(setup: USBControlTransferParameters, length: number): Promise<USBInTransferResult> {
+    if (setup.requestType === "standard") {
+      this.asked.push(`standard ${setup.request} ${setup.value.toString(16)}`);
+      const found = setup.request === GET_DESCRIPTOR ? this.descriptor(setup.value >> 8, setup.value & 0xff) : undefined;
+      return found ? { status: "ok", data: view(found.slice(0, length)) } : { status: "stall" };
+    }
+    const answer = this.firmware?.control?.(setup, new Uint8Array(0), length);
+    return answer instanceof Uint8Array ? { status: "ok", data: view(answer.slice(0, length)) } : { status: "stall" };
+  }
+
+  async controlTransferOut(setup: USBControlTransferParameters, data?: BufferSource): Promise<USBOutTransferResult> {
+    const bytes = data ? new Uint8Array(ArrayBuffer.isView(data) ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) : data) : new Uint8Array(0);
+    if (setup.requestType === "standard") return { status: "stall", bytesWritten: 0 };
+    return this.firmware?.control?.(setup, bytes, 0) ? { status: "ok", bytesWritten: bytes.length } : { status: "stall", bytesWritten: 0 };
+  }
+
+  async transferOut(_endpoint: number, data: ArrayBufferView): Promise<USBOutTransferResult> {
     const bytes = new Uint8Array(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-    if (bytes.length) this.firmware?.receive(bytes);
+    if (bytes.length) this.firmware?.receive?.(bytes);
     return { status: "ok", bytesWritten: bytes.length };
   }
 
-  async transferIn(_endpoint: number, length: number) {
+  async transferIn(_endpoint: number, length: number): Promise<USBInTransferResult> {
     const transfer = this.transfers.shift() ?? (await new Promise<Uint8Array | undefined>((resolve) => (this.reading = resolve)));
     this.reading = undefined;
     if (!transfer) throw new DOMException("The transfer was cancelled.", "AbortError");
     if (transfer.length > length) throw new Error(`a ${transfer.length}-byte transfer, read with room for ${length}`);
-    // A buffer of its own, as WebUSB gives: Tango reads the whole of it.
-    return { status: "ok", data: new DataView(transfer.slice().buffer) };
+    return { status: "ok", data: view(transfer.slice()) };
   }
 
   /** A transfer to the host. */
@@ -106,24 +198,49 @@ class Phone {
   }
 }
 
-/** navigator.usb, with nothing but the pretend phone ever plugged in. */
+/** navigator.usb: devices the site may use, and the one the visitor chooses when asked. */
 class Usb extends EventTarget {
-  devices: Phone[] = [];
+  devices: Device[] = [];
+  /** What the visitor picks from the browser's list, if it is of a kind offered. */
+  chooses?: Device;
+  readonly asked: USBDeviceRequestOptions[] = [];
+
   async getDevices() {
     return this.devices;
   }
-  async requestDevice(): Promise<Phone> {
-    throw new DOMException("No device selected.", "NotFoundError");
+
+  async requestDevice(options: USBDeviceRequestOptions): Promise<Device> {
+    this.asked.push(options);
+    const chosen = this.chooses;
+    const offered = chosen && options.filters.some((filter) => (filter.vendorId ?? chosen.vendorId) === chosen.vendorId &&
+      chosen.configurations[0]!.interfaces.some(({ alternate }) => (filter.classCode ?? alternate.interfaceClass) === alternate.interfaceClass && (filter.subclassCode ?? alternate.interfaceSubclass) === alternate.interfaceSubclass));
+    if (!chosen || !offered) throw new DOMException("No device selected.", "NotFoundError");
+    this.devices.push(chosen);
+    return chosen;
   }
-  plug(phone: Phone) {
-    this.devices = [phone];
-    this.dispatchEvent(Object.assign(new Event("connect"), { device: phone }));
+
+  plug(device: Device) {
+    if (!this.devices.includes(device)) this.devices.push(device);
+    this.dispatchEvent(Object.assign(new Event("connect"), { device }));
   }
-  unplug(phone: Phone) {
-    this.devices = [];
-    this.dispatchEvent(Object.assign(new Event("disconnect"), { device: phone }));
+
+  unplug(device: Device) {
+    this.devices = this.devices.filter((one) => one !== device);
+    this.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
   }
 }
+
+// A phone ------------------------------------------------------------------
+
+const phone = (mode: "adb" | "fastboot") =>
+  new Device({
+    vendorId: 0x18d1,
+    productId: mode === "adb" ? 0x4ee7 : 0x4ee0,
+    manufacturerName: "Pretend",
+    productName: "Pretend Phone",
+    serialNumber: "PRETEND01",
+    interfaces: [{ class: 0xff, subclass: 0x42, protocol: mode === "adb" ? 1 : 3, name: mode === "adb" ? "ADB Interface" : "fastboot", bulk: 1 }],
+  });
 
 const CNXN = 0x4e584e43;
 const AUTH = 0x48545541;
@@ -142,42 +259,50 @@ interface Stream {
   sync?: { path?: string; hash?: ReturnType<typeof createHash> };
 }
 
-/** An adbd: authentication, shell, sync (stat and push) and reboot, over a USB interface. */
+/**
+ * An adbd: authentication, shell, sync (stat and push) and reboot. Packets
+ * arrive as a stream: a header, then its payload, in transfers of whatever
+ * size the host's USB stack makes them.
+ */
 class Adbd implements Firmware {
   verified = false;
   pushed = new Map<string, string>();
   rebooting = false;
+  private readonly incoming = new Bytes();
   private header?: { command: number; arg0: number; arg1: number; length: number };
   private token = randomBytes(20);
   private payload = 256 << 10;
   private next = 1;
   private readonly streams = new Map<number, Stream>();
-  private readonly phone: Phone;
+  private readonly device: Device;
   private readonly key: () => Promise<KeyObject>;
 
-  constructor(phone: Phone, key: () => Promise<KeyObject>) {
-    this.phone = phone;
+  constructor(device: Device, key: () => Promise<KeyObject>) {
+    this.device = device;
     this.key = key;
   }
 
   receive(transfer: Uint8Array<ArrayBuffer>) {
-    if (!this.header) {
-      const view = new DataView(transfer.buffer, transfer.byteOffset, 24);
-      this.header = { command: view.getUint32(0, true), arg0: view.getUint32(4, true), arg1: view.getUint32(8, true), length: view.getUint32(12, true) };
-      if (this.header.length) return;
-      transfer = new Uint8Array(0);
+    this.incoming.push(transfer);
+    for (;;) {
+      if (!this.header) {
+        if (this.incoming.length < 24) return;
+        const head = view(this.incoming.take(24));
+        this.header = { command: head.getUint32(0, true), arg0: head.getUint32(4, true), arg1: head.getUint32(8, true), length: head.getUint32(12, true) };
+      }
+      if (this.incoming.length < this.header.length) return;
+      const { command, arg0, arg1, length } = this.header;
+      this.header = undefined;
+      void this.handle(command, arg0, arg1, this.incoming.take(length).slice());
     }
-    const { command, arg0, arg1 } = this.header;
-    this.header = undefined;
-    void this.handle(command, arg0, arg1, transfer);
   }
 
   private packet(command: number, arg0: number, arg1: number, payload = new Uint8Array(0)) {
     const header = new Uint8Array(24);
-    const view = new DataView(header.buffer);
-    [command, arg0, arg1, payload.length, 0, ~command >>> 0].forEach((value, i) => view.setUint32(i * 4, value, true));
-    this.phone.send(header);
-    if (payload.length) this.phone.send(payload);
+    const out = view(header);
+    [command, arg0, arg1, payload.length, 0, ~command >>> 0].forEach((value, i) => out.setUint32(i * 4, value, true));
+    this.device.send(header);
+    if (payload.length) this.device.send(payload);
   }
 
   private async handle(command: number, arg0: number, arg1: number, payload: Uint8Array<ArrayBuffer>) {
@@ -246,7 +371,7 @@ class Adbd implements Firmware {
     while (input.length >= 8) {
       const head = input.peek(8);
       const request = text(head.subarray(0, 4));
-      const length = new DataView(head.buffer, head.byteOffset, 8).getUint32(4, true);
+      const length = view(head).getUint32(4, true);
       if (request === "DONE") {
         input.take(8);
         this.pushed.set(sync.path!, sync.hash!.digest("hex"));
@@ -285,14 +410,14 @@ class Bootloader implements Firmware {
   downloaded?: string;
   private left = 0;
   private hash = createHash("md5");
-  private readonly phone: Phone;
+  private readonly device: Device;
 
-  constructor(phone: Phone) {
-    this.phone = phone;
+  constructor(device: Device) {
+    this.device = device;
   }
 
   private say(response: string) {
-    this.phone.send(new TextEncoder().encode(response));
+    this.device.send(new TextEncoder().encode(response));
   }
 
   receive(transfer: Uint8Array<ArrayBuffer>) {
@@ -318,11 +443,80 @@ class Bootloader implements Firmware {
   }
 }
 
+// A DFU bootloader -----------------------------------------------------------
+
+const [DETACH, DNLOAD, UPLOAD, GETSTATUS, CLRSTATUS, GETSTATE, ABORT] = [0, 1, 2, 3, 4, 5, 6];
+const [dfuIDLE, dfuDNLOAD_IDLE, dfuMANIFEST_SYNC, dfuUPLOAD_IDLE, dfuERROR] = [2, 5, 6, 9, 10];
+/** What a DFU request carries at most: the functional descriptor says so. */
+const TRANSFER = 1024;
+
+const dfuDevice = () =>
+  new Device({
+    vendorId: 0x0483,
+    productId: 0xdf11,
+    manufacturerName: "Pretend",
+    productName: "Pretend DFU",
+    serialNumber: "DFU0001",
+    interfaces: [
+      {
+        class: 0xfe,
+        subclass: 0x01,
+        protocol: 0x02,
+        name: "Flash",
+        // Its functional descriptor: it downloads and uploads, survives manifestation, takes 1 KB at a time, DFU 1.1.
+        extra: Uint8Array.of(9, 0x21, 0b0111, 0xe8, 0x03, TRANSFER & 0xff, TRANSFER >> 8, 0x10, 0x01),
+      },
+    ],
+  });
+
+/** DFU 1.1's state machine, without the waits: what is downloaded is kept, and uploaded back. */
+class Dfu implements Firmware {
+  image = new Uint8Array(0);
+  private state = dfuIDLE;
+  private incoming: Uint8Array[] = [];
+
+  control({ requestType, request, value }: USBControlTransferParameters, data: Uint8Array, length: number) {
+    if (requestType !== "class") return undefined;
+    switch (request) {
+      case DNLOAD:
+        if (data.length) {
+          this.incoming.push(data);
+          this.state = dfuDNLOAD_IDLE;
+        } else {
+          this.image = Uint8Array.from(Buffer.concat(this.incoming));
+          this.incoming = [];
+          this.state = dfuMANIFEST_SYNC;
+        }
+        return true;
+      case UPLOAD: {
+        const block = this.image.subarray(value * TRANSFER, value * TRANSFER + length);
+        this.state = block.length < length ? dfuIDLE : dfuUPLOAD_IDLE;
+        return block;
+      }
+      case GETSTATUS: {
+        // Manifestation tolerant: done with it the moment it is asked.
+        if (this.state === dfuMANIFEST_SYNC) this.state = dfuIDLE;
+        return Uint8Array.of(0, 0, 0, 0, this.state, 0);
+      }
+      case GETSTATE:
+        return Uint8Array.of(this.state);
+      case CLRSTATUS:
+      case ABORT:
+        this.state = dfuIDLE;
+        return true;
+      case DETACH:
+        return true;
+    }
+    this.state = dfuERROR;
+    return undefined;
+  }
+}
+
 // The machine -------------------------------------------------------------
 
 const bus = new Usb();
 Object.defineProperty(globalThis.navigator, "usb", { value: bus });
-// The page's address: Tango names the browser's key after it.
+// The page's address: Tango's key store names the browser's key after it.
 Object.defineProperty(globalThis, "location", { value: new URL("https://check.invalid/") });
 
 /** The browser's adb key, as src/usb/key.ts made and kept it: the phone checks adb's signatures with it. */
@@ -333,26 +527,31 @@ async function browserKey(): Promise<KeyObject> {
   throw new Error("the browser keeps no adb key");
 }
 
-const { name, machine, run } = await guest((verb, [tool = ""], machine) => {
-  if (verb === "usb") void usb(tool, machine);
+const { name, machine, run } = await guest((verb, [what = "", kinds], machine) => {
+  if (verb === "usb") void usb(what, machine, kinds);
 });
 const checks = new Checks();
 const check = checks.check.bind(checks);
 
 step(`the ${name} machine, with a phone plugged in`);
-
-const android = new Phone("adb");
+const android = phone("adb");
 const adbd = new Adbd(android, browserKey);
 android.firmware = adbd;
 bus.plug(android);
 info("pretend phone in, in Android, USB debugging on");
 
-step("adb");
+step("adb, over USB/IP");
 let [output, took] = await timed(() => run("adb shell echo hello"));
 check("adb shell echo hello", output.includes("hello"), took);
+output = await run("cat /sys/bus/usb/devices/1-1/bConfigurationValue /sys/bus/usb/devices/1-1/product");
+check(
+  "enumerated by the guest's kernel, and configured",
+  output === "1\nPretend Phone" && android.asked.some((one) => one.startsWith("standard 6 3")),
+  `${android.asked.length} requests · ${output.split("\n").join(" · ")}`,
+);
 check("adb signs with the browser's key", adbd.verified);
-output = await run("adb devices");
-check("adb devices", /127\.0\.0\.1:6555\s+device/.test(output), output.split("\n").at(-1));
+output = await run("adb devices; lsusb -d 18d1:4ee7");
+check("adb devices, lsusb", /PRETEND01\s+device/.test(output) && output.includes("ID 18d1:4ee7"), output.split("\n").slice(-2).join(" · "));
 [output, took] = await timed(() => run("time adb shell cat big | md5sum"));
 check(`a ${size(BIG.length)} read`, output.includes(md5(BIG)), `${took} · fish: ${output.match(/Executed in\s+(.+?)\s+fish/)?.[1]}`);
 const sent = (await run("head -c 8388608 /dev/urandom > /tmp/up; md5sum /tmp/up")).split(/\s/)[0]!;
@@ -364,7 +563,9 @@ await run("adb reboot bootloader");
 check("adb reboot bootloader", adbd.rebooting);
 bus.unplug(android);
 await sleep(1000);
-const bootloader = new Phone("fastboot");
+output = await run("cat /run/usb/1; lsusb -d 18d1:4ee7; or echo unplugged");
+check("the phone unplugged from the guest too", output.startsWith("down gone") && output.endsWith("unplugged"), output.split("\n").join(" · "));
+const bootloader = phone("fastboot");
 const firmware = new Bootloader(bootloader);
 bootloader.firmware = firmware;
 bus.plug(bootloader);
@@ -372,7 +573,7 @@ info("the phone is back, as a bootloader");
 
 step("fastboot");
 output = await run("fastboot devices");
-check("fastboot devices", /PRETEND01\s+fastboot/.test(output), output);
+check("fastboot devices", /PRETEND01\s+fastboot/.test(output), output.split("\n").at(-1));
 output = await run("fastboot getvar product");
 check("fastboot getvar product", output.includes("product: pretend"), output.split("\n")[0]);
 const image = Uint8Array.from({ length: 16 << 20 }, (_, i) => (i * 7 + (i >> 16)) & 0xff);
@@ -381,10 +582,35 @@ output = await run("while test (cat /run/drop/state) = none; sleep 0.1; end; md5
 check("a 16 MB file dropped onto the page", output.startsWith(md5(image)));
 [output, took] = await timed(() => run("fastboot stage ~/drop/image.bin"));
 check("its download to the phone", firmware.downloaded === md5(image), `${took} · fastboot: ${output.match(/OKAY \[\s*(.+?)\]/)?.[1]}`);
+// Reset, say: gone a moment, and back as itself.
+bus.unplug(bootloader);
+await sleep(500);
+bus.plug(bootloader);
+await sleep(3000);
+output = await run("usb; lsusb -d 18d1:4ee0");
+check("a device back as itself, lent again unasked", output.includes("Pretend Phone (18d1:4ee0)") && output.includes("ID 18d1:4ee0"), output.split("\n")[0]);
+
+step("dfu-util, with a device the visitor chooses");
+const dfu = dfuDevice();
+const bootrom = new Dfu();
+dfu.firmware = bootrom;
+bus.chooses = dfu;
+const flash = randomBytes(100_000);
+// The visitor drops the firmware onto the page; the last drop said so already.
+await run("echo none > /run/drop/state");
+put([new File([flash], "fw.bin")], machine);
+await run("while test (cat /run/drop/state) = none; sleep 0.1; end");
+[output, took] = await timed(() => run("dfu-util -D ~/drop/fw.bin"));
+check("chosen from devices of DFU's kind", bus.asked.at(-1)?.filters.some((filter) => filter.classCode === 0xfe && filter.subclassCode === 1) ?? false, JSON.stringify(bus.asked.at(-1)?.filters));
+check("dfu-util -D", md5(bootrom.image) === md5(flash) && output.includes("Done!"), `${took} · ${bootrom.image.length} bytes`);
+[output, took] = await timed(() => run("rm -f /tmp/back.bin; dfu-util -U /tmp/back.bin; md5sum /tmp/back.bin"));
+check("dfu-util -U", output.includes(md5(flash)), took);
+output = await run("usb");
+check("two devices lent at once", output.split("\n").filter((line) => /^\s*1-\d+ /.test(line)).length === 2, output.split("\n").slice(0, 2).join(" · "));
 
 step("letting go");
-output = await run("usb off; cat /run/usb/adb /run/usb/fastboot");
-check("usb off", output.endsWith("down off\ndown off"), output.split("\n").join(" · "));
+output = await run("usb off; cat /run/usb/1 /run/usb/2 /run/usb/3; lsusb | count");
+check("usb off", output.includes("down off") && output.endsWith("2"), output.split("\n").join(" · "));
 
 await machine.destroy();
 checks.done();

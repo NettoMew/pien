@@ -1,34 +1,32 @@
-// adb, fastboot and usb on the page's side: a phone on this computer's USB,
-// bridged to the guest's own tools through ports of the console (see
-// image/rootfs/etc/fish/functions/__usb.fish and hostd). Only this much loads
-// with the page; WebUSB and the two protocols come the first time a tool
-// asks for a phone.
+// `usb` on the page's side: the visitor's USB devices, lent to the guest over
+// USB/IP (see image/rootfs/etc/fish/functions/usb.fish and hostd). Only this
+// much loads with the page; WebUSB and USB/IP come with the first device.
 //
 // The guest learns what happened over the control line (hostd):
-//   usb key <private> <public> <name>   this browser's adb key, before adb's first phone
-//   usb up <tool> <serial> <name>
-//   usb down <tool> <why>
+//   usb key <private> <public> <name>   this browser's adb key, before a phone with adb is lent
+//   usb attach <port> <busid> <name>    a device to attach, through that port of the console
+//   usb up <port>                       … and the guest has configured it: it is the visitor's
+//   usb detach <port> <why>             a device taken back, or gone
+//   usb down <why>                      no device lent, as asked
 
 import type { Machine } from "../machine.ts";
-
-export type Tool = "adb" | "fastboot";
 
 let devices: Promise<typeof import("./devices.ts")> | undefined;
 let queue: Promise<unknown> = Promise.resolve();
 
-/** `usb;adb`, `usb;fastboot` and `usb;off` from the guest, one after another. */
-export function usb(verb: string, machine: Machine) {
+/** `usb;open;<kinds>` and `usb;off` from the guest, one after another. */
+export function usb(verb: string, machine: Machine, kinds = "") {
   queue = queue
     .then(async () => {
       const { attach, release } = await (devices ??= import("./devices.ts"));
-      if (verb === "adb" || verb === "fastboot") await attach(verb, machine);
+      if (verb === "open") await attach(machine, kinds);
       if (verb === "off") await release(machine);
     })
     .catch((error) => console.error("usb:", error));
   return queue;
 }
 
-/** Lets go of the phone without a word: the machine it was joined to is going away. */
+/** Lets go of every device without a word: the machine they were lent to is going away. */
 export async function unwire() {
   if (devices) await (await devices).release();
 }

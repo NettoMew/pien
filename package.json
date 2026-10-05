@@ -13,8 +13,6 @@
     "@xterm/xterm": "^6.0.0",
     "@yume-chan/adb": "^2.6.4",
     "@yume-chan/adb-credential-web": "^2.1.0",
-    "@yume-chan/adb-daemon-webusb": "^2.3.2",
-    "@yume-chan/stream-extra": "^2.6.1",
     "lucide-react": "^1.52.0",
     "motion": "^14.0.0",
     "react": "^19.3.0",
