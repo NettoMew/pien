@@ -36,7 +36,7 @@ about.md
 | `moments new` | 写一条，编辑器关掉时问一句就发出去 |
 | `moments delete <编号>` | 删一条（编号补全得出来） |
 
-编辑器默认是 Microsoft Edit（`edit`）；`set -U EDITOR nano` 换成 nano。名字只用小写字母、数字和横线，它也是网址的一部分。草稿、文章、动态的名字都能 Tab 补全。
+编辑器默认是 Microsoft Edit（`edit`）；`set EDITOR nano` 换成 nano（只在这次访问里有效，页面刷新后又是 Edit）。名字只用小写字母、数字和横线，它也是网址的一部分。草稿、文章、动态的名字都能 Tab 补全。
 
 ## 图片
 

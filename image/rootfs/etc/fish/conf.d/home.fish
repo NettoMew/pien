@@ -4,7 +4,7 @@ status is-interactive; or return
 
 set -gx LANG C.UTF-8
 set -gx COLORTERM truecolor
-set -gx EDITOR vi
+set -gx EDITOR edit # Microsoft Edit; `set EDITOR nano` for nano
 set -gx LESS -R
 set -gx PATH $PATH /usr/sbin /sbin # ip, ifconfig, route: looking is allowed
 
