@@ -8,6 +8,7 @@ import {
   ArrowUp,
   BookOpen,
   CircleQuestionMark,
+  ClipboardPaste,
   Eraser,
   Folder,
   OctagonX,
@@ -37,13 +38,28 @@ interface Shortcut extends Required<VariantProps<typeof keycap>> {
   /** What a screen reader says, when the caption alone would not do. */
   name?: string;
   icon: LucideIcon;
-  /** What it types. */
-  input: string;
+  /** What it types, or what it does. */
+  input: string | (() => Promise<void>);
+}
+
+/**
+ * What the clipboard holds, pasted as a paste: wrapped in bracketed-paste
+ * marks when the program asks for them, so the shell takes it in one piece.
+ * The browser asks once, or on iOS each time, before letting the page read it.
+ */
+async function paste() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) term.paste(text);
+  } catch {
+    // Refused, or nothing a page may read: nothing to paste.
+  }
 }
 
 const CONTROLS: Shortcut[] = [
   { caption: "tab", name: "Tab", icon: ArrowRightToLine, tone: "control", input: "\t" },
   { caption: "prev", name: "Previous command", icon: ArrowUp, tone: "control", input: "\x1b[A" },
+  { caption: "paste", name: "Paste", icon: ClipboardPaste, tone: "control", input: paste },
   { caption: "^C", name: "Interrupt", icon: OctagonX, tone: "interrupt", input: "\x03" },
 ];
 
@@ -57,7 +73,8 @@ const COMMANDS: Shortcut[] = [
 function Key({ caption, name, icon: Icon, tone, input }: Shortcut) {
   const styles = keycap({ tone });
   const type = () => {
-    term.input(input);
+    if (typeof input === "string") term.input(input);
+    else void input();
     term.focus();
   };
   const press = (event: PointerEvent) => {
@@ -79,7 +96,7 @@ export function Keys() {
   return (
     <nav
       aria-label="Keys"
-      className="hidden grid-cols-[repeat(3,minmax(0,1fr))_1px_repeat(4,minmax(0,1fr))] gap-1.5 px-3 pt-3 pb-[max(1.375rem,env(safe-area-inset-bottom))] pointer-coarse:grid"
+      className="hidden grid-cols-[repeat(4,minmax(0,1fr))_1px_repeat(4,minmax(0,1fr))] gap-1.5 px-3 pt-3 pb-[max(1.375rem,env(safe-area-inset-bottom))] pointer-coarse:grid"
     >
       {CONTROLS.map((shortcut) => (
         <Key key={shortcut.caption} {...shortcut} />

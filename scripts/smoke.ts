@@ -1,6 +1,6 @@
 // End-to-end check in a real browser: the machine powers on and resumes, a
 // visitor types, a post is fetched on demand, a file is written in Edit, and a
-// phone gets its keys.
+// phone gets its keys, the paste key among them.
 // Screenshots land in .cache/smoke/.
 //
 //   npm run dev            # in another terminal
@@ -80,13 +80,18 @@ await type("clear; cat /tmp/note.txt");
 await onScreen(desktop, "written in Edit");
 
 step("phone");
-const phone = await browser.newPage({ ...devices["Pixel 7"] });
+const phone = await browser.newPage({ ...devices["Pixel 7"], permissions: ["clipboard-read", "clipboard-write"] });
 report(phone);
 await phone.goto(URL);
 await atPrompt(phone);
 await phone.getByRole("button", { name: "blog", exact: true }).tap();
 await phone.waitForTimeout(1500);
 await shot(phone, "8-phone");
+await phone.evaluate(() => navigator.clipboard.writeText("echo pasted-(math 40 + 2)"));
+await phone.getByRole("button", { name: "Paste" }).tap();
+await onScreen(phone, "echo pasted-(math 40 + 2)"); // the clipboard is read asynchronously
+await phone.keyboard.press("Enter");
+await onScreen(phone, "pasted-42"); // what it printed, not what was typed
 
 step("network");
 info(...fetched);
