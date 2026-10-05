@@ -21,9 +21,6 @@ export const machines = {
 
 export type MachineName = keyof typeof machines;
 
-/** What the guest has of a machine's memory to use. */
-export const usableMemoryMB = (name: MachineName) => machines[name].memoryMB - 16;
-
 /** The machines that are built, shipped and started. */
 export const inService = (Object.keys(machines) as MachineName[]).filter((name) => !machines[name].sealed);
 
@@ -81,6 +78,18 @@ export interface Manifest {
     versions: Record<string, string>;
   };
   snapshots: Partial<Record<MachineName, Snapshot>>;
+  /** How big each of the files above is, in bytes (scripts/lib/manifest.ts measures them). */
+  sizes: Record<string, number>;
+}
+
+/**
+ * What machine `name` downloads before it runs, as v86Options asks for it:
+ * the BIOSes, then the snapshot, or the kernel and the file tree with `cold`.
+ * The guest's files come later, each as it is first read.
+ */
+export function downloads(manifest: Manifest, name: MachineName, { cold = false } = {}): string[] {
+  const { files, snapshots } = manifest;
+  return [files.bios, files.vgaBios, ...(cold ? [files.kernel, files.fsJson] : [snapshots[name]!.state])];
 }
 
 /**

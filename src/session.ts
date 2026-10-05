@@ -5,7 +5,7 @@
 
 import wasm from "v86/build/v86.wasm?url";
 import manifest from "virtual:vm-manifest";
-import { inServiceNamed, type MachineName, machines, v86Options } from "../vm.config.ts";
+import { downloads, inServiceNamed, type MachineName, machines, v86Options } from "../vm.config.ts";
 import { pick, put } from "./drop.ts";
 import { Machine } from "./machine.ts";
 import { net, unwire as unwireNet } from "./net/index.ts";
@@ -97,19 +97,21 @@ async function resume(started: Machine, name: MachineName) {
   const snapshot = manifest.snapshots[name];
   const screen = cold || !snapshot ? null : fetch(vm(snapshot.screen)).then((res) => res.arrayBuffer());
 
-  // How much has arrived, across every file the machine asked for. Behind a
-  // compressing server the browser may count decoded bytes against an
-  // encoded total, so the ratio is clamped rather than trusted.
-  const downloads = new Map<string, { loaded: number; total: number }>();
+  // How much has arrived of what the machine downloads before it runs. The
+  // manifest knows how big each file is, so the whole is known from the first
+  // byte on and the progress only ever grows; v86's own wasm, which comes
+  // before anything else, joins in once the server says how big it is.
+  // Behind a compressing server the browser may count decoded bytes against
+  // an encoded size, so no file counts for more than its size.
+  const sizes = new Map(downloads(manifest, name, { cold }).map((file) => [vm(file), manifest.sizes[file] ?? 0]));
+  const arrived = new Map<string, number>();
+  const sum = (bytes: Map<string, number>) => [...bytes.values()].reduce((all, each) => all + each, 0);
   started.emulator.add_listener("download-progress", ({ file_name, loaded, total }) => {
-    downloads.set(file_name, { loaded, total });
-    let done = 0;
-    let all = 0;
-    for (const file of downloads.values()) {
-      done += file.loaded;
-      all += file.total;
-    }
-    useMachine.setState({ progress: all ? Math.min(1, done / all) : 0 });
+    if (file_name === wasm && total) sizes.set(wasm, total);
+    const size = sizes.get(file_name);
+    if (size === undefined) return;
+    arrived.set(file_name, Math.min(loaded, size));
+    useMachine.setState({ progress: sum(arrived) / (sum(sizes) || 1) });
   });
   started.emulator.add_listener("download-error", ({ file_name }) =>
     useMachine.setState({ phase: "failed", problem: `Could not load ${file_name}. Try reloading.` }),

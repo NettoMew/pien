@@ -6,6 +6,7 @@
   --color-black: var(--term-black);
   --color-screen: var(--term-background);
   --color-ink: var(--term-foreground);
+  --color-white: var(--term-white);
   --color-faint: var(--term-bright-black);
   --color-line: var(--term-selection-background);
   --color-red: var(--term-red);

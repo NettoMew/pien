@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { Manifest } from "../../vm.config.ts";
@@ -18,8 +18,11 @@ export async function readManifest(): Promise<Manifest> {
   return JSON.parse(await readFile(FILE, "utf8"));
 }
 
-export async function writeManifest(manifest: Manifest): Promise<void> {
-  await writeFile(FILE, JSON.stringify(manifest, null, 2) + "\n");
+/** Writes the manifest, with the size of every file it names measured afresh. */
+export async function writeManifest(manifest: Omit<Manifest, "sizes">): Promise<void> {
+  const files = [...Object.values(manifest.files), ...Object.values(manifest.snapshots).flatMap((saved) => [saved.state, saved.screen])];
+  const sizes = Object.fromEntries(await Promise.all(files.map(async (file) => [file, (await stat(join(VM, file))).size] as const)));
+  await writeFile(FILE, JSON.stringify({ ...manifest, sizes } satisfies Manifest, null, 2) + "\n");
 }
 
 /**

@@ -43,12 +43,12 @@ report(desktop);
 step(`visit ${URL}`);
 const t0 = Date.now();
 await desktop.goto(URL);
-// The power-on, caught on its way: the beam's sweep, then the machine reporting in.
+// The power-on, caught on its way: the beam's sweep, then the log running.
 await desktop.waitForSelector("[role=status]");
 await desktop.waitForTimeout(500);
 await shot(desktop, "1-beam");
 await desktop.waitForTimeout(700);
-await shot(desktop, "2-report");
+await shot(desktop, "2-log");
 await atPrompt(desktop);
 info(`at the prompt after ${((Date.now() - t0) / 1000).toFixed(1)} s · ${size(bytes)} transferred`);
 await desktop.waitForTimeout(300);

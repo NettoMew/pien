@@ -58,11 +58,6 @@
     0 0 44px 10px color-mix(in oklab, --theme(--color-cyan) 22%, transparent);
 }
 
-/* Character cells, each a block one column wide, in the current colour. */
-@utility cells {
-  background: repeating-linear-gradient(90deg, currentColor 0 calc(1ch - 2px), transparent calc(1ch - 2px) 1ch);
-}
-
 /* A key on the phone's deck: a little raised, a little lit from above. */
 @utility keycap {
   border: 1px solid color-mix(in oklab, --theme(--color-ink) 9%, transparent);

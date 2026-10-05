@@ -1,18 +1,21 @@
-// Power on: a dot in the dark, a line, the raster opening over-bright. Then
-// the machine reports in while its memory arrives, and the screen clears to
-// the prompt. The machine loads alongside all of it, so the show costs a
-// visitor nothing past its first second: a machine already up by then goes
-// straight to its prompt.
+// Power on: a dot in the dark, a line, the raster opening over-bright. Then a
+// boot log scrolls past (../boot-log.ts), made up but paced by the real thing:
+// each line stands for its share of what the machine has to fetch, so the log
+// runs out as the machine comes up, and its last service is OK once the
+// machine is at its prompt. The machine loads alongside all of it, so the show
+// costs a visitor nothing past its first second: a machine already up by then
+// goes straight to its prompt.
 
-import { m, useReducedMotion, useSpring, useTransform, type Variants } from "motion/react";
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { m, useMotionValueEvent, useReducedMotion, useSpring, type Variants } from "motion/react";
+import { type RefObject, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import manifest from "virtual:vm-manifest";
-import { usableMemoryMB } from "../../vm.config.ts";
+import { machines } from "../../vm.config.ts";
+import { bootLog, type LogLine } from "../boot-log.ts";
 import { cold } from "../session.ts";
 import { useMachine } from "../store.ts";
 
-/** How long OK stays up before the screen clears, in milliseconds. */
-const SETTLE = 400;
+/** How long the finished log stays up before the screen clears, in milliseconds. */
+const SETTLE = 420;
 
 /** When the beam has swept to both edges and the raster starts to open, in seconds. */
 const OPEN = 0.63;
@@ -50,27 +53,17 @@ const raster: Variants = {
   },
 };
 
-/** Lines come up one after another, the way a terminal prints them. */
-const report: Variants = { hidden: {}, shown: { transition: { staggerChildren: 0.06 } } };
-const line: Variants = { hidden: { opacity: 0 }, shown: { opacity: 1, transition: { duration: 0 } } };
-
 export function Boot({ onDone }: { onDone: () => void }) {
-  const running = useMachine((machine) => machine.phase === "running");
   const reduced = useReducedMotion();
-  const [stage, setStage] = useState<"power" | "report" | "done">(reduced ? "report" : "power");
+  const [stage, setStage] = useState<"power" | "log" | "done">(reduced ? "log" : "power");
   const done = useEffectEvent(onDone);
 
-  // Once the raster is open: straight to the prompt if the machine is up, else its report.
-  const lit = () => setStage(useMachine.getState().phase === "running" ? "done" : "report");
+  // Once the raster is open: straight to the prompt if the machine is up, else its log.
+  const lit = () => setStage(useMachine.getState().phase === "running" ? "done" : "log");
 
   useEffect(() => {
-    if (stage === "done") {
-      done();
-    } else if (stage === "report" && running) {
-      const settle = setTimeout(() => setStage("done"), SETTLE);
-      return () => clearTimeout(settle);
-    }
-  }, [stage, running]);
+    if (stage === "done") done();
+  }, [stage]);
 
   return (
     <m.div
@@ -82,7 +75,7 @@ export function Boot({ onDone }: { onDone: () => void }) {
       exit={{ opacity: 0, transition: { duration: 0.12 } }}
     >
       <m.div variants={reduced ? undefined : raster} className="crt-screen absolute inset-0">
-        {stage !== "power" && <Report />}
+        {stage !== "power" && <Log onEnd={() => setStage("done")} />}
       </m.div>
       {!reduced && (
         <>
@@ -98,82 +91,90 @@ export function Boot({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** What the machine is, then how far along its memory is. */
-function Report() {
+/**
+ * The log as far as the machine has got, printed top down until the screen
+ * is full and scrolling after that. The count eases after the real progress,
+ * so lines run rather than jump; `onEnd` once the last is up and OK.
+ */
+function Log({ onEnd }: { onEnd: () => void }) {
   const { machine, phase, progress, problem } = useMachine();
-  const tools = machine === "workbench" ? manifest.workbench?.versions : undefined;
-  const facts: [string, ReactNode][] = [
-    ["Kernel", `Linux ${manifest.kernel} · Alpine ${manifest.alpine}`],
-    ["Memory", `${usableMemoryMB(machine)} MB`],
-    ["Disk", tools ? "9p, and a disk of toolchains" : "9p over HTTP, read on demand"],
-    ...((tools
-      ? [
-          ["Compilers", `gcc ${tools.gcc} · clang ${tools.clang} · rust ${tools.rust}`],
-          ["Runtimes", `go ${tools.go} · python ${tools.python} · node ${tools.node}`],
-          ["Editor", `neovim ${tools.neovim} · LazyVim`],
-        ]
-      : []) as [string, ReactNode][]),
-    [
-      "Network",
-      <>
-        off · <span className="text-cyan">net on</span>
-      </>,
-    ],
-    ["Shell", `fish ${manifest.fish}`],
-  ];
-
-  return (
-    <m.ol
-      variants={report}
-      initial="hidden"
-      animate="shown"
-      className="gutter text-[15px]/[1.3] whitespace-pre max-sm:text-[13px]/[1.3] [&_*]:phosphor"
-    >
-      <m.li variants={line} className="ps-[2ch] font-semibold">
-        {manifest.hostname.toUpperCase()}
-      </m.li>
-      <m.li variants={line} className="ps-[2ch] text-faint">
-        v86 · {manifest.arch} · WebAssembly
-      </m.li>
-      <m.li variants={line} className="h-[1.3em]" />
-      {facts.map(([label, value]) => (
-        <m.li key={label} variants={line} className="ps-[2ch]">
-          <span className="inline-block w-[11ch] text-faint">{label}</span>
-          {value}
-        </m.li>
-      ))}
-      <m.li variants={line} className="h-[1.3em]" />
-      <m.li variants={line} className="flex items-center gap-[2ch] ps-[2ch]">
-        <span className="w-[18ch] text-faint">{cold ? "Loading the kernel" : "Restoring memory"}</span>
-        <Meter value={progress} />
-        {phase === "running" && <span className="text-green">OK</span>}
-      </m.li>
-      {problem && (
-        <m.li variants={line} className="ps-[2ch] text-red">
-          {problem}
-        </m.li>
-      )}
-    </m.ol>
+  const [lines] = useState(() =>
+    bootLog({ kernel: manifest.kernel, hostname: manifest.hostname, memoryMB: machines[machine].memoryMB, cold }),
   );
-}
 
-/** A bar of character cells and a percentage, both easing after the real count. */
-function Meter({ value }: { value: number }) {
-  const progress = useSpring(value, { stiffness: 120, damping: 24, restDelta: 0.001 });
-  useEffect(() => progress.set(value), [progress, value]);
-  const reveal = useTransform(progress, (p) => `inset(0 ${100 - p * 100}% 0 0)`);
-  const percent = useTransform(progress, (p) => `${Math.round(p * 100)}%`);
+  const eased = useSpring(0, { stiffness: 120, damping: 24, restDelta: 0.001 });
+  const [shown, setShown] = useState(0);
+  useEffect(() => eased.set(phase === "running" ? 1 : progress), [eased, phase, progress]);
+  useMotionValueEvent(eased, "change", (value) => setShown(Math.min(lines.length, Math.ceil(value * lines.length))));
+
+  const end = useEffectEvent(onEnd);
+  const finished = phase === "running" && shown === lines.length;
+  useEffect(() => {
+    if (!finished) return;
+    const settle = setTimeout(end, SETTLE);
+    return () => clearTimeout(settle);
+  }, [finished]);
+
+  const screen = useRef<HTMLOListElement>(null);
+  const rows = useRows(screen);
+  const status = phase === "running" ? "ok" : phase === "failed" ? "failed" : "pending";
+  const printed = lines.slice(0, shown).map((line, at) => (
+    <Line key={at} line={line} status={at === lines.length - 1 ? status : "ok"} />
+  ));
+  if (problem) printed.push(<li key="problem" className="text-red">{problem}</li>);
 
   return (
     <>
-      <span className="cells relative h-[11px] w-[40ch] text-line max-sm:w-[16ch]">
-        <span className="phosphor-stroke absolute inset-0 text-yellow">
-          <m.span style={{ clipPath: reveal }} className="cells absolute inset-0" />
-        </span>
-      </span>
-      <m.span aria-hidden className="w-[4ch] text-yellow">
-        {percent}
-      </m.span>
+      <ol ref={screen} aria-hidden className="gutter h-full overflow-hidden text-[15px]/[1.3em] whitespace-pre max-sm:text-[13px]/[1.3em] [&_*]:phosphor">
+        {printed.slice(-rows)}
+      </ol>
+      {problem && <p className="sr-only">{problem}</p>}
     </>
   );
+}
+
+function Line({ line, status }: { line: LogLine; status: "ok" | "failed" | "pending" }) {
+  if (line.kind === "kernel") {
+    return (
+      <li className={`overflow-hidden ${line.warning ? "text-yellow" : "text-white"}`}>
+        <span className="text-faint">[{line.time.toFixed(6).padStart(12)}]</span> {line.text}
+      </li>
+    );
+  }
+  return (
+    <li className="flex max-w-[78ch] justify-between gap-[2ch]">
+      <span className="min-w-0 overflow-hidden">
+        <span className="text-green"> * </span>
+        {line.text}
+      </span>
+      {status === "ok" && (
+        <span>
+          [ <span className="text-green">ok</span> ]
+        </span>
+      )}
+      {status === "failed" && (
+        <span>
+          [ <span className="text-red">!!</span> ]
+        </span>
+      )}
+    </li>
+  );
+}
+
+/** How many whole lines fit in `box`, kept up to date as it resizes. */
+function useRows(box: RefObject<HTMLElement | null>) {
+  const [rows, setRows] = useState(Infinity);
+  useLayoutEffect(() => {
+    const element = box.current;
+    if (!element) return;
+    const measure = () => {
+      const style = getComputedStyle(element);
+      const height = element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      setRows(Math.max(1, Math.floor(height / parseFloat(style.lineHeight))));
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [box]);
+  return rows;
 }
