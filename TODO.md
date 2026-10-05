@@ -5,7 +5,7 @@
 ## 先做
 
 1. **推到远程仓库**：提交已经有了，还没有远程仓库；推上去之后 `.github/workflows/build.yml` 才会第一次真正跑起来。
-2. **自动部署**：现在全靠手动。站点是 `SITE_URL=https://arc.moe npm run build`，把 `dist/` 换到 .101 的 `/srv/homepage-demo/site`（旧的留成 `site.bak-<时间>`），再重启 `homepage-demo` 和 `homepage-press`；中继和 press 的镜像也是在 v2in0 上构建、手动装上的。CI 只上传 `site` 构件，还没接上发布。
+2. **自动部署**：现在全靠手动。站点是 `SITE_URL=https://arc.moe npm run build`，把 `dist/` 换到 dmit.nrt 的 `/srv/homepage-demo/site`（旧的留成 `site.bak-<时间>`），再重启 `homepage-demo` 和 `homepage-press`；中继和 press 的镜像也是在 v2in0 上构建、手动装上的。CI 只上传 `site` 构件，还没接上发布。
 3. **替换占位内容**：`content/about.md` 里的简介、GitHub、邮箱还是方括号里的占位；两篇示例文章（`markdown.md` 只是排版测试）。改种子要重建镜像，服务器上的内容仓库也要一起改。
 
 ## 接真设备试一遍

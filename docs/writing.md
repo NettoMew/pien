@@ -68,7 +68,7 @@ press 用和构建时同一套模板（`scripts/lib/blog.ts`）渲染文章页�
 - `npm test --prefix press`：真 git 仓库、真 sharp：草稿、图片的 EXIF 和隐私、各种宽度的副本、客户机的 JPEG、发布、修订、撤下、动态、拒绝没有标题或缺图的文章、提交历史。
 - `npm run check:writing`（先 `npm run build`）：本机起 press，Chrome 登录后在客户机里拖进一张图、写一篇带图的文章、存草稿、发布、终端里画出图片、网页的 srcset、换一台刚恢复的机器照样有、发一条动态再删掉、撤下文章、登出后什么都写不了。
 
-## 部署（.101）
+## 部署
 
 ```
 /srv/homepage-press/

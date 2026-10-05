@@ -140,36 +140,47 @@ ssh -N -L 127.0.0.1:18095:127.0.0.1:8095 <那台机器> &
 RELAY=127.0.0.1:18095 npm run dev
 ```
 
-## 部署（2026-10-05，.101）
+## 部署
+
+本站在 dmit.nrt 上（2026-10-06 从香港的 .100、.101 搬来），前面是 Cloudflare 的代理：
 
 ```
-访客 ──https://arc.moe/relay──▶ .100 Caddy ──▶ .101:18090 nginx（homepage-demo）
-                                                                   │ Docker 网络 homepage
-                                                                   ▼
-                                                     homepage-relay:8095（不发布端口）──▶ 互联网，出口 154.86.23.202
+访客 ──https://arc.moe──▶ Cloudflare ──▶ dmit.nrt：Caddy（homepage-caddy，80、443）──▶ nginx（homepage-demo）
+                                                                    │ Docker 网络 homepage，双栈
+                                                                    ▼
+                                                      homepage-relay:8095（不发布端口）──▶ 互联网，IPv4 和 IPv6
 ```
 
 - **中继**：容器 `homepage-relay`，镜像 `homepage-relay:<提交>`，以 65534（nobody）运行，`--restart unless-stopped`，只接在 Docker 网络 `homepage` 上。配置在 `/srv/homepage-relay/relay.toml`（属主 65534，权限 600），只有会话密钥（和 press 的相同）；格式见 `deploy/relay.toml.example`：最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
-- **nginx**：`deploy/nginx.conf` 新增 `location = /relay`，按请求经 Docker 的 DNS 找到中继，所以中继不在时 nginx 也能启动；这一段不写访问日志。容器 `homepage-demo` 多接了 `homepage` 网络。
-- **Caddy（.100）**：把整个站点连同 WebSocket 转给 .101，中继不用单独配置。站点在 `arc.moe`；`www.arc.moe` 和原来的 `test-demo.arc.moe` 都 301 到那里（2026-10-05 搬过去）。
+- **网络**：`homepage` 是双栈的，IPv4 `172.18.0.0/16`，IPv6 是另一段唯一本地前缀 `fdd1:31fb:31e3::/64`（和访客的那段无关：访客的网段只在中继的进程里）。两个族出门都由宿主机做 NAT。IPv6 的那份要 Docker 自己写 ip6tables 规则，Debian 12 的 Docker 20.10 里这还算实验功能，所以 `/etc/docker/daemon.json` 是 `{"experimental": true, "ip6tables": true}`。Docker 因此打开了宿主机的 IPv6 转发；eth0 的 `accept_ra` 本来就是 2，这台机器照样从路由通告拿自己的地址和默认路由。
+- **nginx**：`deploy/nginx.conf` 两个族都听：容器名在双栈网络上解析出两个地址，Caddy 先拨 IPv6 的那个。`location = /relay` 按请求经 Docker 的 DNS 找中继，只问 A 记录（`ipv6=off`），中继不在时 nginx 也能启动；这一段不写访问日志。
+- **Caddy**：`/srv/caddy/Caddyfile` 只有 `arc.moe { reverse_proxy homepage-demo:80 }`，整个站点连同 WebSocket 都转给 nginx，中继不用单独配置。证书走 HTTP-01，Cloudflare 的代理会放行；Cloudflare 的 SSL 模式是 Full 以上。
 
-**怎么做的**（镜像在 v2in0 上构建，`.101` 不必拉 Rust 构建环境）：
+**换中继**（镜像在 v2in0 上构建，dmit.nrt 不必拉 Rust 构建环境；两台机器之间直连很慢，经本机中转）：
 
 ```sh
-# v2in0：构建
+# v2in0：构建，存到本机，再传过去
 tar -cf - -C relay Dockerfile .dockerignore Cargo.toml Cargo.lock src | ssh v2in0 docker build -t homepage-relay:<提交> -
-# 经本机传到 .101
-ssh v2in0 "docker save homepage-relay:<提交> | gzip -1" | ssh .101 "gunzip | docker load"
-# .101
-docker network create homepage
-docker run -d --name homepage-relay --restart unless-stopped --network homepage   -v /srv/homepage-relay/relay.toml:/etc/relay.toml:ro homepage-relay:<提交>
-docker network connect homepage homepage-demo
-# 新的 nginx.conf 和站点放好后
-docker restart homepage-demo
+ssh v2in0 "docker save homepage-relay:<提交> | gzip -1" > relay.tar.gz
+scp relay.tar.gz dmit.nrt:/tmp/ && ssh dmit.nrt "gunzip -c /tmp/relay.tar.gz | docker load"
+# dmit.nrt
+docker rm -f homepage-relay
+docker run -d --name homepage-relay --restart unless-stopped --network homepage \
+  -v /srv/homepage-relay/relay.toml:/etc/relay.toml:ro homepage-relay:<提交>
 ```
 
-**换会话密钥**：见 [login.md](login.md#部署101)，press 和中继要一起换，所有登录随之作废。
+**网络改成双栈**（2026-10-06，做过一次）：写好 `daemon.json`，停掉四个容器，`systemctl restart docker`，把它们从 `homepage` 上摘下来，删掉网络再建，再接回去、启动：
 
-**回滚**：`/srv/homepage-demo/` 下有带时间戳的 `nginx.conf.bak-*` 和 `site.bak-*`；挪回去，`docker network disconnect homepage homepage-demo`，`docker restart homepage-demo`，再 `docker rm -f homepage-relay`。
+```sh
+docker network create --ipv6 \
+  --subnet 172.18.0.0/16 --gateway 172.18.0.1 \
+  --subnet fdd1:31fb:31e3::/64 --gateway fdd1:31fb:31e3::1 homepage
+```
 
-**上线后实测**（2026-10-05，还用口令的时候；本机 Chrome 打开 https://test-demo.arc.moe/）：`net on` 5.2 秒（含输入口令）；出口 154.86.23.202；ping 1.1.1.1 平均 41 ms；github 200；下载 1.9 MB/s；.101 自己的内网地址和 10.0.0.1 都被拦下；中继日志里只有计数。
+站点停了 13 秒。当时 nginx 还只听 IPv4，Caddy 先拨 IPv6 拨不通，又报了一分半钟 502，加上 `listen [::]:80`、重载之后恢复。
+
+**换会话密钥**：见 [login.md](login.md#部署)，press 和中继要一起换，所有登录随之作废。
+
+**回滚**：中继用上一个镜像重建容器（`homepage-relay:054ba61` 还留着）。IPv6：删掉 `daemon.json`，照上面的步骤重启 Docker，把网络建回只有 IPv4 的。站点：`/srv/homepage-demo/` 下有带时间戳的 `site.bak-*` 和 `nginx.conf.bak-*`。香港的旧部署停着没删，必要时整个切回去。
+
+**上线后实测**（2026-10-06；线上的中继只认站长的登录，所以在同一台机器、同一个网络上用同一个镜像临时起了一个带密钥的中继，本机 Chrome 经 SSH 转发连上，验完即删）：`net on` 2.3 秒，第一行就列出两个地址；`ping -6 2606:4700:4700::1111` 平均 76 ms；`curl -6` 的出口是这台机器自己的 IPv6 地址，Cloudflare 的机房是 NRT；`ipv6.google.com` 200，`www.google.com` 走 IPv4（RFC 6724，见上）；`mtr -6` 七跳都在：网关 `fdca:c697:4c23::2`、Docker 网桥 `fdd1:31fb:31e3::1`、DMIT 的两台路由器、JPIX、Cloudflare、目的地；`fd00::1` 1.6 秒内被拦下。

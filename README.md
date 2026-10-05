@@ -74,9 +74,9 @@ npm run dev            # http://localhost:5173
 
 ## 部署
 
-`.github/workflows/build.yml` 会从零构建整站（内核、`image/tools/` 里的工具、镜像、快照、页面），跑完各项检查和 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on`、登录和写作还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们，并直接提供 press 渲染出的 `/content/` 和网页（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署2026-10-05101)、[docs/login.md](docs/login.md#部署101) 和 [docs/writing.md](docs/writing.md#部署101)）。
+`.github/workflows/build.yml` 会从零构建整站（内核、`image/tools/` 里的工具、镜像、快照、页面），跑完各项检查和 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on`、登录和写作还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们，并直接提供 press 渲染出的 `/content/` 和网页（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署)、[docs/login.md](docs/login.md#部署) 和 [docs/writing.md](docs/writing.md#部署)）。
 
-本站在 https://arc.moe：nginx、中继、press 三个容器，前面是 Caddy。发布还是手动的：`SITE_URL=https://arc.moe npm run build`，把 `dist/` 换上去，旧的留一份备份，再重启 nginx 和 press 的容器（press 要按新的样式表重新渲染网页版）。
+本站在 https://arc.moe：dmit.nrt 上的 nginx、中继、press 三个容器，前面是 Caddy 和 Cloudflare 的代理，容器之间的网络是双栈的。发布还是手动的：`SITE_URL=https://arc.moe npm run build`，把 `dist/` 换上去，旧的留一份备份，再重启 nginx 和 press 的容器（press 要按新的样式表重新渲染网页版）。
 
 ## 实测
 

@@ -98,7 +98,7 @@ ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
 - `npm test --prefix press`：软件实现的通行密钥（`press/test/authenticator.ts`，none 证明）走完注册、登录、重放、跨源、删除，加上模拟的 GitHub 走完关联和登录；token 的字节和中继对齐。
 - `npm run check:login`（要先 `npm run build`）：本机起中继和 press，`vite preview` 在前面，Chrome 的虚拟认证器扮通行密钥，在客户机里把第一个通行密钥、登出登入、列表、伪造的提问、经本站中继上网、自己的中继、错误的密钥都走一遍。CI 在跑。
 
-## 部署（.101）
+## 部署
 
 ```
 /srv/homepage-press/
