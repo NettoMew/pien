@@ -18,7 +18,7 @@ npm run dev            # http://localhost:5173
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
 | `npm run check:serial` | 给机器插几根假的串口线：一根 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍；一块停在 U-Boot `loady` 的板子，`sb` 往里传文件；一个蓝牙串口，走远再回来（见 [docs/serial.md](docs/serial.md)） |
 | `npm run check:ble` | 给机器几台假的蓝牙 LE 设备：Nordic UART、HM-10、自定的服务，经 `/dev/ttyBLE0` 往返字节，走远再回来（见 [docs/serial.md](docs/serial.md)） |
-| `npm run check:files` | 把文件从机器里 `take` 出来：存成它本身、打成 zip、ZIP64、手机上的下载，存下来的再拖回去让 Python 验 CRC（见 [docs/files.md](docs/files.md)） |
+| `npm run check:files` | 把文件从机器里 `take` 出来：存成它本身、打成 zip、ZIP64、手机上的下载，存下来的再拖回去让 Python 验 CRC；再共享一个假文件夹进去，读、写、改名、删，放开后一个文件也不少（见 [docs/files.md](docs/files.md)） |
 | `npm run check:usb` | 给机器插几台假 USB 设备，连描述符都有，客户机的内核经 USB/IP 枚举它们：一台手机给 adb 和 fastboot，一台 DFU 设备给 dfu-util（见 [docs/usb.md](docs/usb.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
@@ -46,7 +46,7 @@ npm run dev            # http://localhost:5173
 
 **快照**（`scripts/build-state.ts`）。在 Node 里冷启动一次，先用一个一次性的会话把常用的东西预热进页缓存，再开一个全新会话、从第一个字节起录下终端输出。等它停在提示符时，整机存成快照，录下的输出另存。访客恢复快照后，页面回放这段输出，fish 已经在提示符等着了。
 
-**页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再滚过一屏开机日志。日志是编的（`boot-log.ts`），节奏却是真的：每一行代表要下载的东西里的一份，下完日志也走完，最后一项服务等机器真正就绪才打上 `ok`；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标），以及客户机要用到浏览器授权时浮出的那枚键（`Offer.tsx`、`src/gesture.ts`：手机只在点按的那一刻允许弹窗和选文件，命令传到页面时已经晚了，点一下这枚键就补上）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制；反过来，`take` 把客户机里的文件存到访客的电脑上，一个文件是它本身，一个目录或几样东西打成 zip（[docs/files.md](docs/files.md)）。
+**页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再滚过一屏开机日志。日志是编的（`boot-log.ts`），节奏却是真的：每一行代表要下载的东西里的一份，下完日志也走完，最后一项服务等机器真正就绪才打上 `ok`；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标），以及客户机要用到浏览器授权时浮出的那枚键（`Offer.tsx`、`src/gesture.ts`：手机只在点按的那一刻允许弹窗和选文件，命令传到页面时已经晚了，点一下这枚键就补上）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制；反过来，`take` 把客户机里的文件存到访客的电脑上，一个文件是它本身，一个目录或几样东西打成 zip；`share` 把访客电脑上的一个文件夹接到 `/mnt` 下面，能读能写（[docs/files.md](docs/files.md)）。
 
 **联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层加密，前面的 TLS 终结者看不到帧。本站的中继只认站长的登录；谁都可以搭自己的中继（`relay key` 给它一把密钥），用 `net relay <地址>` 指过去。详见 [docs/relay.md](docs/relay.md)。
 
@@ -126,6 +126,7 @@ npm run dev            # http://localhost:5173
 - **USB/IP 慢得出奇**：推 8 MB 要 1.8 秒，原来的桥 0.3 秒。内核每个请求都等一个 48 字节的回答，socat 那一头的 TCP 没设 `nodelay`，这些小回答都被 Nagle 算法和延迟确认拖住。设上之后 0.34 秒。
 - **usbip 说 attach 失败，内核却已经接上了**：它最后要把连接记在 `/var/run/vhci_hcd` 里，镜像里没有 `/var/run`（那是 Alpine 的 baselayout 建的），记不下就报失败，hostd 只好又把设备拔掉。镜像里补上了 `/var/run` 指向 `/run`。
 - **拖进来的文件只能读一次**：客户机每次关上一个文件，v86 都叫存储 uncache 一次，不只是写的时候；页面原来一听到就把读法扔了，再读就去服务器上找一个并不存在的文件。客户机的页缓存常常挡在前面，内核大了一点、内存紧了才露出来。现在只在 inode 已经不在“别处”（写过了）时才扔。
+- **写给共享文件夹的东西半分钟后才到**：9p 用 `cache=loose` 时，客户机写的东西先在页缓存里，到了 Linux 默认的 30 秒才写回 9p；开着不关的文件，页面半分钟都看不到它变。`/etc/rc` 把这段时间改成 2 秒。
 - **v86 的 UART 把收到的字节全攒着**：串口没有程序开着时，真的 16550 收满 16 字节的 FIFO 就丢，驱动打开时还会清空；v86 不管 FIFO 的清空位，收到多少攒多少，一台不停说话的设备能把内存攒满，下一个打开串口的程序先读到一大堆旧字节。页面看着 OUT2（驱动开着串口时拉高）：没人开着，字节就不往里送。
 - **内核不认第四个串口**：x86 上 COM4 的探测要做回环测试，COM1 到 COM3 都跳过。v86 的 UART 回环只回字节、不把 DTR、RTS 回到 CTS、DSR 上，测试不过，ttyS3 的节点在、口却是空的。`/etc/rc` 用 `setserial /dev/ttyS3 uart 16550A` 告诉它。
 - **16550 的速度只到 115200**：默认时钟除以 16 再除以分频，分频最小是 1。`/etc/rc` 用 `setserial` 把 ttyS2 的时钟调高到 24 MHz（除以 16 之后），1500000、3000000 都成了整数分频；差一点点的（115200 这类）由页面对回标准速度。

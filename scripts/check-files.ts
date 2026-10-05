@@ -1,8 +1,10 @@
-// Takes files out of a machine as a visitor would, and checks what arrives,
-// through the page's own src/take.ts and src/zip.ts. Only the browser is
-// pretended: the save dialog of Chromium on a computer, which keeps what is
-// written to it, and the download a phone gets instead. What arrives is
-// dropped back into the guest, where Python's zipfile tests every CRC.
+// Takes files out of a machine as a visitor would, and shares a folder into
+// it, through the page's own src/take.ts, src/zip.ts and src/share/. Only
+// the browser is pretended: the save dialog of Chromium on a computer, which
+// keeps what is written to it, and the download a phone gets instead; and a
+// folder the visitor chooses, kept in memory as the origin private file
+// system keeps one (scripts/lib/folder.ts). What is taken is dropped back
+// into the guest, where Python's zipfile tests every CRC.
 //
 //   npm run check:files                  the home machine
 //   npm run check:files -- workbench
@@ -11,13 +13,19 @@
 // which the page cannot read where it is; a directory, with one empty and a
 // link in it, as a zip; several things at once; ZIP64, asked for early; a
 // download, where there is no save dialog; and a visitor who saves nothing.
+// Then a shared folder: listed and read; written, appended to, truncated,
+// replaced as an editor saves; made in, moved within and removed from;
+// moved into and out of; committed while still open; let go of, with every
+// file of the folder still there; and one the browser lets only be read.
 
 import { createHash } from "node:crypto";
 import { ask, secret } from "../src/ask.ts";
 import { put } from "../src/drop.ts";
+import { share } from "../src/share/index.ts";
 import { take } from "../src/take.ts";
 import { type Entry, zip } from "../src/zip.ts";
-import { Checks, guest } from "./lib/guest.ts";
+import { PretendDirectory, PretendFile } from "./lib/folder.ts";
+import { Checks, guest, sleep } from "./lib/guest.ts";
 import { info, step } from "./lib/log.ts";
 
 const md5 = (bytes: Uint8Array) => createHash("md5").update(bytes).digest("hex");
@@ -58,13 +66,17 @@ const document = {
     },
   }),
 };
-const window = globalThis as unknown as { showSaveFilePicker?: typeof showSaveFilePicker };
-Object.assign(globalThis, { window: globalThis, document });
+/** The folder the visitor chooses when the page asks for one. */
+let folder = new PretendDirectory("proj-folder", { "a.txt": "alpha\n", "b.txt": "beta\n", sub: { "c.txt": "gamma\n" }, empty: {} });
+const window = globalThis as unknown as { showSaveFilePicker?: typeof showSaveFilePicker; showDirectoryPicker?: () => Promise<PretendDirectory> };
+Object.assign(globalThis, { window: globalThis, document, FileSystemHandle: class { move() {} } });
 window.showSaveFilePicker = showSaveFilePicker;
+window.showDirectoryPicker = async () => folder;
 
 const { name, machine, run } = await guest((verb, fields, machine) => {
   // The page knows more topics; this knows the one it checks.
   if (verb === "ask") void ask(fields, machine, { take: async () => take });
+  if (verb === "share") void share(fields[0] ?? "", machine, fields[1]);
 });
 machine.control(`ask ${secret}`);
 const checks = new Checks();
@@ -131,6 +143,59 @@ declines = true;
 output = await run("take ~/note.txt; echo status $status; ls ~/.cache/take | count");
 check("not saved, said so, and nothing left behind", output.includes("Not saved.") && output.includes("status 1") && output.endsWith("0"), output.split("\n").join(" · "));
 info("every save went through src/take.ts, as the page runs it");
+declines = false;
+
+step("a folder of the visitor's, shared");
+const text = (path: string) => (folder.at(path) as PretendFile | undefined)?.text;
+output = await run("share");
+check("share", output.includes("/mnt/proj-folder") && output.includes("to read and to write"), output.split("\n")[0]);
+output = await run("find /mnt/proj-folder | sort | string join ' '; cat /mnt/proj-folder/sub/c.txt");
+check("listed, and read", output === "/mnt/proj-folder /mnt/proj-folder/a.txt /mnt/proj-folder/b.txt /mnt/proj-folder/empty /mnt/proj-folder/sub /mnt/proj-folder/sub/c.txt\ngamma", output.split("\n").join(" · "));
+
+step("written back as the guest writes");
+await run("echo hello > /mnt/proj-folder/new.txt; echo again > /mnt/proj-folder/a.txt; echo more >> /mnt/proj-folder/a.txt");
+check("a new file, one overwritten, one appended to", text("new.txt") === "hello\n" && text("a.txt") === "again\nmore\n", JSON.stringify([text("new.txt"), text("a.txt")]));
+output = await run("head -c 3000000 /dev/urandom > /tmp/big; cp /tmp/big /mnt/proj-folder/big.bin; md5sum < /tmp/big");
+const big = folder.at("big.bin") as PretendFile | undefined;
+check("3 MB, written as it comes", !!big && output.startsWith(md5(big.bytes)), `${big?.bytes.length ?? 0} bytes, committed ${big?.commits ?? 0} times`);
+await run(": > /mnt/proj-folder/b.txt");
+check("truncated", text("b.txt") === "", JSON.stringify(text("b.txt")));
+// As an editor saves: the new text beside the old, then over it.
+await run("printf 'saved anew' > /mnt/proj-folder/.a.txt.tmp; mv /mnt/proj-folder/.a.txt.tmp /mnt/proj-folder/a.txt");
+await sleep(300);
+check("replaced, as an editor saves", text("a.txt") === "saved anew" && !folder.at(".a.txt.tmp"), JSON.stringify(text("a.txt")));
+
+step("made in, moved within, removed from");
+await run("mkdir /mnt/proj-folder/d; mv /mnt/proj-folder/new.txt /mnt/proj-folder/d/moved.txt; mv /mnt/proj-folder/d /mnt/proj-folder/d2; rm /mnt/proj-folder/b.txt; rmdir /mnt/proj-folder/empty");
+await sleep(300);
+check("a directory made, a file moved into it, the directory renamed", text("d2/moved.txt") === "hello\n" && !folder.at("new.txt") && !folder.at("d"), [...folder.children.keys()].join(" "));
+check("a file and a directory removed", !folder.at("b.txt") && !folder.at("empty"), [...folder.children.keys()].join(" "));
+
+step("moved into it, and out of it");
+output = await run("printf outside > ~/outside.txt; mv ~/outside.txt /mnt/proj-folder/; mv /mnt/proj-folder/sub/c.txt ~/; cat ~/c.txt");
+await sleep(300);
+check("in, and out, as between filesystems", text("outside.txt") === "outside" && !folder.at("sub/c.txt") && output === "gamma", JSON.stringify([text("outside.txt"), output]));
+
+step("committed while still open");
+// Written, and kept open: the guest's writeback brings it out in two
+// seconds or so, and two more without a write commit it.
+await run("sh -c 'exec 3> /mnt/proj-folder/live.txt; printf one >&3; sleep 12' &; disown");
+await sleep(500);
+const early = text("live.txt");
+await sleep(7000);
+check("after a quiet while, though still open", early === "" && text("live.txt") === "one", JSON.stringify([early, text("live.txt")]));
+await sleep(5000);
+
+step("let go of");
+output = await run("share off; test -e /mnt/proj-folder; or echo gone");
+check("share off: gone from the guest", output.endsWith("gone"), output.split("\n").join(" · "));
+check("and every file of the folder still there", text("a.txt") === "saved anew" && text("d2/moved.txt") === "hello\n" && text("outside.txt") === "outside" && !!folder.at("big.bin") && text("live.txt") === "one", [...folder.children.keys()].join(" "));
+
+step("a folder the browser lets only be read");
+folder = new PretendDirectory("read-only", { "r.txt": "read me\n" });
+folder.allows = "read";
+output = await run("share; cat /mnt/read-only/r.txt; touch /mnt/read-only/x 2>&1; share off");
+check("read, not written", output.includes("to read: this browser") && output.includes("read me") && output.includes("Permission denied") && !folder.at("x"), output.split("\n").slice(0, 3).join(" · "));
 
 await machine.destroy();
 checks.done();

@@ -11,6 +11,13 @@ ln -sf /proc/self/fd /dev/fd
 
 hostname -F /etc/hostname
 
+# What is written waits in the guest's memory a while before it reaches the
+# 9p filesystem; out there is the page, and a folder the visitor shared
+# (src/share/). Two seconds, not Linux's thirty, so a file still being
+# written reaches the visitor's folder all the same.
+echo 200 > /proc/sys/vm/dirty_expire_centisecs
+echo 100 > /proc/sys/vm/dirty_writeback_centisecs
+
 # On its first start fish has Python build completions out of man pages, of
 # which the image has none: the directory it would fill tells it not to.
 install -d -o guest -g guest /home/guest/.cache /home/guest/.cache/fish /home/guest/.cache/fish/generated_completions
@@ -71,6 +78,12 @@ for port in 1 2 3; do
 done
 echo off > /run/usb/state
 chmod 666 /run/usb/state
+
+# Folders the visitor shares (see hostd): what each is, and how the latest
+# ask for one went, in a file the guest marks "waiting" in.
+mkdir -p /run/share
+echo off > /run/share/state
+chmod 666 /run/share/state
 
 # The guest's questions to the page (__ask.fish): hostd keeps the secret
 # they carry here, and writes the answers; only the guest may read them.

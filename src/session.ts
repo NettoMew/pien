@@ -17,6 +17,7 @@ import { useMachine } from "./store.ts";
 import { opened, openLink, term } from "./terminal.ts";
 import { ble, unwire as unwireBle } from "./ble/index.ts";
 import { serial, unwire as unwireSerial } from "./serial/index.ts";
+import { share, unwire as unwireShare } from "./share/index.ts";
 import { usb, unwire as unwireUsb } from "./usb/index.ts";
 
 const vm = (file: string) => `${import.meta.env.BASE_URL}vm/${file}`;
@@ -34,10 +35,11 @@ term.onData((data) => live && machine?.write(data));
 term.onBinary((data) => live && machine?.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
 term.onResize(({ cols, rows }) => live && machine?.resize(cols, rows));
 
-// The guest's `open`, `net`, `drop`, `adb`, `fastboot`, `usb`, `serial`
-// and `ble` print a private escape sequence; see open.fish, net.fish,
-// drop.fish, __usb.fish and __lend.fish. `machine;<name>` asks for another machine, and
-// `ask;…` is a question with an answer (ask.ts, __ask.fish).
+// The guest's `open`, `net` and `drop` print a private escape sequence (see
+// open.fish, net.fish, drop.fish), and so does whatever lends it a device of
+// the visitor's: a serial port, a BLE device, a USB device, a folder (see
+// __lend.fish and __let_go.fish). `machine;<name>` asks for another machine,
+// and `ask;…` is a question with an answer (ask.ts, __ask.fish).
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
@@ -46,6 +48,7 @@ term.parser.registerOscHandler(7337, (data) => {
   if (verb === "usb" && machine) void usb(rest[0] ?? "", machine, rest[1]);
   if (verb === "serial" && machine) void serial(rest[0] ?? "", machine, rest[1]);
   if (verb === "ble" && machine) void ble(rest[0] ?? "", machine, rest[1]);
+  if (verb === "share" && machine) void share(rest[0] ?? "", machine, rest[1]);
   if (verb === "drop" && machine) pick(machine);
   const wanted = rest[0] ?? "";
   if (verb === "machine" && inServiceNamed(wanted) && wanted !== useMachine.getState().machine) useMachine.setState({ next: wanted });
@@ -98,6 +101,7 @@ export async function stop() {
   await unwireUsb();
   await unwireSerial();
   await unwireBle();
+  await unwireShare();
   term.reset();
   await stopping?.destroy();
 }

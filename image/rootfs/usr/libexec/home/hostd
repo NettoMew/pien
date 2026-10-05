@@ -27,6 +27,12 @@
 #   ble up <name>    a Bluetooth LE serial device of the visitor's is attached
 #                    (src/ble/): /dev/ttyBLE0 leads to it
 #   ble down <why>   it went away, or was let go
+#   share up <n> <rw|ro>
+#                    a folder of the visitor's is listed in /.share/<n>
+#                    (src/share/): put it in place, at /mnt/<its name>
+#   share down <n> <why>
+#                    … and let go of: take it away
+#   share none <why> no folder was shared, as asked
 #   drop <n>         files from the visitor's computer wait in /.drop/<n>
 #                    (src/drop.ts): move them into ~/drop
 #   drop none        … or the visitor chose none
@@ -129,6 +135,25 @@ drop() {
 	rmdir "/.drop/$1"
 	chown guest:guest /home/guest/drop
 	echo "$1" > /run/drop/state
+}
+
+# A folder the visitor shared, listed in a directory the guest has never
+# seen, as dropped files are, and moved to /mnt under its own name, or with
+# a number after it if one by that name is there.
+share() { # <n> <rw|ro>
+	case $1 in "" | *[!0-9]*) return ;; esac
+	for listed in "/.share/$1"/*; do break; done
+	[ -d "$listed" ] || return
+	name=${listed##*/} path=/mnt/${listed##*/}
+	i=1
+	while [ -e "$path" ]; do
+		i=$((i + 1))
+		path=/mnt/$name-$i
+	done
+	mv "$listed" "$path"
+	rmdir "/.share/$1"
+	echo "up $2 $path" > "/run/share/$1"
+	echo "up $2 $path" > /run/share/state
 }
 
 # The site's writing, newer than the guest's: home/ holds the files new or
@@ -252,6 +277,22 @@ while read -r cmd arg; do
 			rm -f /dev/ttyBLE0
 			printf 'down %s\n' "${arg#down }" > /run/ble/state
 			;;
+		esac
+		;;
+	share)
+		set -- $arg
+		case $1 in
+		up) share "$2" "$3" ;;
+		down)
+			case $2 in "" | *[!0-9]*) continue ;; esac
+			# The page has let go of the folder: what is removed here is the
+			# guest's listing of it, never a file of the visitor's.
+			read -r up mode path < "/run/share/$2"
+			case $path in /mnt/?*) rm -rf "$path" ;; esac
+			rm -f "/run/share/$2"
+			echo "down $3" > /run/share/state
+			;;
+		none) echo "down $2" > /run/share/state ;;
 		esac
 		;;
 	drop) drop "$arg" ;;

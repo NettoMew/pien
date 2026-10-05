@@ -85,19 +85,24 @@ export function directory(machine: Machine, path: string): number {
   return at;
 }
 
-/** Puts the file `name` in directory `parent`, `size` bytes that `read` gives, under the storage key `key`. */
-export function lend(machine: Machine, parent: number, name: string, size: number, key: string, read: Reader, mtime = Date.now() / 1000) {
+/** Puts the file `name` in directory `parent`, `size` bytes that `read` gives, under the storage key `key`. Its inode. */
+export function lend(machine: Machine, parent: number, name: string, size: number, key: string, read: Reader, mtime = Date.now() / 1000, mode = 0o644) {
   const fs = filesystem(machine);
-  const inode = Object.assign(fs.inodes[fs.CreateFile(plain(name), parent)]!, {
-    size,
-    status: ELSEWHERE,
-    sha256sum: key,
-    mode: 0o100644,
-    uid: GUEST,
-    gid: GUEST,
-    mtime: Math.floor(mtime),
-  } satisfies Partial<Inode>);
+  const id = fs.CreateFile(plain(name), parent);
+  Object.assign(fs.inodes[id]!, { size, mode: 0o100000 | mode, uid: GUEST, gid: GUEST, mtime: Math.floor(mtime) } satisfies Partial<Inode>);
+  adopt(machine, id, key, read);
+  return id;
+}
+
+/** Takes the file `id` over, as it stands: its bytes are those `read` gives, under the storage key `key`, from now on. */
+export function adopt(machine: Machine, id: number, key: string, read: Reader) {
+  const inode = Object.assign(filesystem(machine).inodes[id]!, { status: ELSEWHERE, sha256sum: key });
   lent.set(key, { inode, read });
+}
+
+/** Lets go of the file under `key`: v86 holds its bytes no longer, nor asks for them. */
+export function forget(key: string) {
+  lent.delete(key);
 }
 
 /** A reader for bytes already here. */
