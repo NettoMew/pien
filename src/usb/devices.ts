@@ -10,6 +10,7 @@ import type { Machine, PortNumber } from "../machine.ts";
 import * as adb from "./adb.ts";
 import * as fastboot from "./fastboot.ts";
 import type { Tool } from "./index.ts";
+import { adbKey } from "./key.ts";
 
 /** The interfaces the tools speak, as Google defines them. */
 const INTERFACES = {
@@ -79,7 +80,27 @@ async function join(tool: Tool, device: USBDevice, machine: Machine) {
     return down(machine, tool, busy ? "busy" : `error ${describe(error)}`);
   }
   links.set(tool, link);
+  if (tool === "adb") await introduce(machine);
   up(machine, tool, device);
+}
+
+/** The machines that have this browser's adb key: adb reads it as its server starts. */
+const keyed = new WeakSet<Machine>();
+
+/**
+ * Hands the guest this browser's adb key, made the first time a phone is
+ * used at all. Without storage to keep one in, adb makes its own, for this
+ * visit only.
+ */
+async function introduce(machine: Machine) {
+  if (keyed.has(machine)) return;
+  keyed.add(machine);
+  try {
+    const key = await adbKey();
+    machine.control(`usb key ${key.private} ${key.public} ${key.name}`);
+  } catch (error) {
+    console.warn("usb: no adb key kept in this browser:", error);
+  }
 }
 
 async function drop(tool: Tool, why?: string) {

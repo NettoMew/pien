@@ -42,6 +42,7 @@ jobs:
       - run: npm run build:kernel
       - run: npm run build:vm # the toolchain disk is built with this runner's Docker
       - run: npm run check:usb
+      - run: npm run check:usb -- workbench
       - run: npm run lint
       - run: npm run build # type-checks first
 

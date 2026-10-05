@@ -11,7 +11,7 @@ import { Machine } from "./machine.ts";
 import { known, net, unwire as unwireNet } from "./net/index.ts";
 import { useMachine } from "./store.ts";
 import { opened, openLink, term } from "./terminal.ts";
-import { introduce, usb, unwire as unwireUsb } from "./usb/index.ts";
+import { usb, unwire as unwireUsb } from "./usb/index.ts";
 
 const vm = (file: string) => `${import.meta.env.BASE_URL}vm/${file}`;
 const params = new URLSearchParams(location.search);
@@ -115,13 +115,11 @@ async function resume(started: Machine, name: MachineName) {
 
   // Sets the guest's clock and time zone to the browser's (and, on a cold
   // boot, starts the session); tells it whether this browser already has a
-  // WARP device, and the workbench this browser's adb key. A cold-booted
-  // guest opens its control line after we got here, and says so: it is
-  // greeted again then.
+  // WARP device. A cold-booted guest opens its control line after we got
+  // here, and says so: it is greeted again then.
   const greet = () => {
     started.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
     if (known()) started.control("net known");
-    if (name === "workbench") void introduce(started);
   };
   started.onControl((line) => line === "ready" && greet());
 

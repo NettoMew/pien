@@ -7,7 +7,12 @@ export default {
   arch: "x86",
   repos: ["main", "community"],
 
-  packages: ["busybox", "busybox-binsh", "fish", "fastfetch", "htop", "tree", "curl", "ssl_client", "openssh-client-default", "mtr", "tzdata"],
+  packages: [
+    "busybox", "busybox-binsh", "fish", "fastfetch", "htop", "tree", "curl", "ssl_client", "openssh-client-default", "mtr", "tzdata",
+    // A phone on the visitor's USB (src/usb/), on either machine. Alpine's adb
+    // and fastboot bring python3 along.
+    "android-tools-adb", "android-tools-fastboot", "socat",
+  ],
 
   // fish wants the full terminfo database; the common entries are plenty.
   replace: { "ncurses-terminfo": "ncurses-terminfo-base" },
@@ -33,8 +38,8 @@ export default {
   hostname: "zutto-issho",
 
   // The workbench's second disk (docs/workbench.md): compilers, runtimes,
-  // language servers, a configured Neovim and Android's tools, built by
-  // scripts/build-workbench.ts and laid over /usr when the disk is attached.
+  // language servers and a configured Neovim, built by
+  // scripts/build-workbench.ts and laid over the guest's own directories.
   // What apk cannot provide comes from each language's own installer, pinned.
   workbench: {
     packages: [
@@ -52,8 +57,8 @@ export default {
       "neovim", "tree-sitter-cli", "lua-language-server", "stylua", "shfmt", "taplo",
       "git", "tig", "lazygit", "ripgrep", "fd", "fzf", "tmux", "bash", "less", "file", "jq", "yq-go", "sqlite",
       "zip", "unzip", "xz", "zstd", "tar", "openssl",
-      // Android
-      "android-tools", "socat",
+      // The rest of Android's tools: images, partitions, boot images
+      "android-tools",
     ],
     npm: [
       "pyright@1.1.414",

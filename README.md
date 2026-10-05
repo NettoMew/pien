@@ -16,7 +16,7 @@ npm run dev            # http://localhost:5173
 | `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件，加 `--machine workbench` 连进工作台 |
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
-| `npm run check:usb` | 给工作台插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
+| `npm run check:usb [-- workbench]` | 给 home（或工作台）插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
 | `RELAY=host:port npm run dev` | 开发服务器把 `/relay` 转给那里的中继（默认 127.0.0.1:8095，见 docs/relay.md） |
@@ -42,7 +42,7 @@ npm run dev            # http://localhost:5173
 
 **联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。另一条路 `net warp` 用浏览器里的 Rust/wasm 客户端直连 Cloudflare WARP（试验，[docs/warp.md](docs/warp.md)）。
 
-**工作台**（`image/workbench/`，[docs/workbench.md](docs/workbench.md)）。客户机里敲 `workbench`，屏幕关掉，换一台 768 MB 的机器开起来，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim（LazyVim，每种语言的 LSP、格式化、调试），还有 adb 和 fastboot：经 WebUSB 连访客电脑上的手机，客户机里跑的是真正的 adb 和 fastboot。`home` 换回来。
+**工作台**（`image/workbench/`，[docs/workbench.md](docs/workbench.md)）。客户机里敲 `workbench`，屏幕关掉，换一台 768 MB 的机器开起来，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim（LazyVim，每种语言的 LSP、格式化、调试）。`home` 换回来。两台机器上都有真正的 adb 和 fastboot，经 WebUSB 连访客电脑上的手机（同一篇文档）。
 
 **排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点。输出到管道时仍然是原文。
 

@@ -6,14 +6,14 @@ function help --description 'What this machine can do'
         'open post.md' 'read it as a web page' \
         'fastfetch  htop' 'look at this machine' \
         'net on' 'go online: curl, ping, ssh, mtr' \
-        drop 'bring in files from your computer'
+        drop 'bring in files from your computer' \
+        'adb  fastboot' 'a phone over USB, as on any desk'
     if __on_workbench
         set -a rows \
             nvim 'the editor, set up for every language here' \
-            'adb  fastboot' 'a phone over USB, as on any desk' \
             home 'back to the small machine'
     else
-        set -a rows workbench 'compilers, nvim, adb: a bigger machine'
+        set -a rows workbench 'compilers and nvim: a bigger machine'
     end
 
     echo

@@ -1,24 +1,28 @@
-// Puts a pretend phone on the workbench's USB and runs the guest's own adb
-// and fastboot against it, through the page's bridge (src/usb/) just as a
-// browser runs it. Only WebUSB is pretended: the phone stands in for the
-// browser's device, with a small adbd and a small bootloader behind it.
+// Puts a pretend phone on a machine's USB and runs the guest's own adb and
+// fastboot against it, through the page's bridge (src/usb/) just as a
+// browser runs it. Only WebUSB and IndexedDB are pretended: the phone stands
+// in for the browser's device, with a small adbd and a small bootloader
+// behind it, and fake-indexeddb keeps the browser's adb key.
 //
-//   npm run check:usb
+//   npm run check:usb                  the home machine
+//   npm run check:usb -- workbench
 //
 // Checked: the browser's key reaching adb (the phone verifies adb's
-// signature with it), a shell, a large read and a large push, a reboot into
-// the bootloader with the phone coming back as another device, and fastboot
-// there: a variable, and the download of a file dropped onto the page.
+// signature with the key the browser keeps), a shell, a large read and a
+// large push, a reboot into the bootloader with the phone coming back as
+// another device, and fastboot there: a variable, and the download of a file
+// dropped onto the page.
 
-import { constants, createHash, createPublicKey, type KeyObject, publicDecrypt, randomBytes } from "node:crypto";
+import "fake-indexeddb/auto";
+import { constants, createHash, createPrivateKey, createPublicKey, type KeyObject, publicDecrypt, randomBytes } from "node:crypto";
 import { join, sep } from "node:path";
 import xterm from "@xterm/headless"; // CommonJS: no named exports
-import { adbGeneratePublicKey } from "@yume-chan/adb";
+import AdbWebCredentialStore from "@yume-chan/adb-credential-web";
 import { Bytes } from "../src/bytes.ts";
 import { Machine } from "../src/machine.ts";
 import { put } from "../src/drop.ts";
 import { usb } from "../src/usb/index.ts";
-import { v86Options } from "../vm.config.ts";
+import { type MachineName, machines, v86Options } from "../vm.config.ts";
 import { info, size, step } from "./lib/log.ts";
 import { readManifest, VM } from "./lib/manifest.ts";
 
@@ -27,7 +31,6 @@ const at = (file: string) => join(VM, file).split(sep).join("/") + (file.endsWit
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const md5 = (bytes: Uint8Array) => createHash("md5").update(bytes).digest("hex");
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
-const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
 // The phone ---------------------------------------------------------------
 
@@ -157,9 +160,9 @@ class Adbd implements Firmware {
   private next = 1;
   private readonly streams = new Map<number, Stream>();
   private readonly phone: Phone;
-  private readonly key: KeyObject;
+  private readonly key: () => Promise<KeyObject>;
 
-  constructor(phone: Phone, key: KeyObject) {
+  constructor(phone: Phone, key: () => Promise<KeyObject>) {
     this.phone = phone;
     this.key = key;
   }
@@ -192,7 +195,7 @@ class Adbd implements Firmware {
       case AUTH:
         if (arg0 === 2) {
           // adb signs the token as if it were a SHA-1 digest: it ends what the signature decrypts to.
-          const signed = publicDecrypt({ key: this.key, padding: constants.RSA_PKCS1_PADDING }, payload);
+          const signed = publicDecrypt({ key: await this.key(), padding: constants.RSA_PKCS1_PADDING }, payload);
           this.verified = Buffer.compare(signed.subarray(-20), this.token) === 0;
           if (!this.verified) return this.packet(AUTH, 1, 0, (this.token = randomBytes(20)));
         }
@@ -326,18 +329,21 @@ class Bootloader implements Firmware {
 
 const bus = new Usb();
 Object.defineProperty(globalThis.navigator, "usb", { value: bus });
+// The page's address: Tango names the browser's key after it.
+Object.defineProperty(globalThis, "location", { value: new URL("https://check.invalid/") });
 
-// The browser's key, made as src/usb/key.ts has Tango make it.
-const pair = await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: Uint8Array.of(1, 0, 1), hash: "SHA-1" },
-  true,
-  ["sign", "verify"],
-);
-const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
-const publicKey = createPublicKey({ key: Buffer.from(await crypto.subtle.exportKey("spki", pair.publicKey)), format: "der", type: "spki" });
+/** The browser's adb key, as src/usb/key.ts made and kept it: the phone checks adb's signatures with it. */
+async function browserKey(): Promise<KeyObject> {
+  for await (const key of new AdbWebCredentialStore("guest").iterateKeys()) {
+    return createPublicKey(createPrivateKey({ key: Buffer.from(key.buffer), format: "der", type: "pkcs8" }));
+  }
+  throw new Error("the browser keeps no adb key");
+}
 
+const name = process.argv[2] ?? "home";
+if (!(name in machines)) throw new Error(`no machine called ${name}; there is ${Object.keys(machines).join(" and ")}`);
 const machine = new Machine({
-  ...v86Options(at, await readManifest(), "workbench", { cold: false }),
+  ...v86Options(at, await readManifest(), name as MachineName, { cold: false }),
   wasm_path: join(ROOT, "node_modules/v86/build/v86.wasm"),
 });
 
@@ -396,15 +402,14 @@ async function timed<T>(work: () => Promise<T>): Promise<[T, string]> {
   return [result, `${((performance.now() - started) / 1000).toFixed(1)} s`];
 }
 
-step("the workbench, with a phone plugged in");
+step(`the ${name} machine, with a phone plugged in`);
 await machine.loaded();
 machine.resize(100, 32);
 machine.attach("UTC");
 await sleep(1500);
-machine.control(`usb key ${base64(pkcs8)} ${base64(adbGeneratePublicKey(pkcs8))} guest@check`);
 
 const android = new Phone("adb");
-const adbd = new Adbd(android, publicKey);
+const adbd = new Adbd(android, browserKey);
 android.firmware = adbd;
 bus.plug(android);
 info("pretend phone in, in Android, USB debugging on");
