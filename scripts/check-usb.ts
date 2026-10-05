@@ -15,20 +15,13 @@
 
 import "fake-indexeddb/auto";
 import { constants, createHash, createPrivateKey, createPublicKey, type KeyObject, publicDecrypt, randomBytes } from "node:crypto";
-import { join, sep } from "node:path";
-import xterm from "@xterm/headless"; // CommonJS: no named exports
 import AdbWebCredentialStore from "@yume-chan/adb-credential-web";
 import { Bytes } from "../src/bytes.ts";
-import { Machine } from "../src/machine.ts";
 import { put } from "../src/drop.ts";
 import { usb } from "../src/usb/index.ts";
-import { type MachineName, machines, v86Options } from "../vm.config.ts";
+import { Checks, guest, sleep, timed } from "./lib/guest.ts";
 import { info, size, step } from "./lib/log.ts";
-import { readManifest, VM } from "./lib/manifest.ts";
 
-const ROOT = join(import.meta.dirname, "..");
-const at = (file: string) => join(VM, file).split(sep).join("/") + (file.endsWith("/") ? "/" : "");
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const md5 = (bytes: Uint8Array) => createHash("md5").update(bytes).digest("hex");
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
@@ -340,73 +333,13 @@ async function browserKey(): Promise<KeyObject> {
   throw new Error("the browser keeps no adb key");
 }
 
-const name = process.argv[2] ?? "home";
-if (!(name in machines)) throw new Error(`no machine called ${name}; there is ${Object.keys(machines).join(" and ")}`);
-const machine = new Machine({
-  ...v86Options(at, await readManifest(), name as MachineName, { cold: false }),
-  wasm_path: join(ROOT, "node_modules/v86/build/v86.wasm"),
+const { name, machine, run } = await guest((verb, tool, machine) => {
+  if (verb === "usb") void usb(tool, machine);
 });
-
-// A headless xterm.js stands in for the page's terminal: it answers what fish
-// asks of its terminal after every command, and passes the guest's private
-// escape sequences on, here just usb's, as the page's does.
-const term = new xterm.Terminal({ cols: 100, rows: 32, allowProposedApi: true });
-term.onData((data) => machine.write(data));
-term.parser.registerOscHandler(7337, (data) => {
-  const [verb, tool] = data.split(";");
-  if (verb === "usb") void usb(tool ?? "", machine);
-  return true;
-});
-const decoder = new TextDecoder();
-let screen = "";
-machine.onOutput((bytes) => {
-  term.write(bytes);
-  screen += decoder.decode(bytes, { stream: true });
-});
-
-const until = async (what: string, test: () => boolean, ms = 180_000) => {
-  const deadline = performance.now() + ms;
-  while (!test()) {
-    if (performance.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await sleep(20);
-  }
-};
-
-// The terminal's escape sequences: commands to it (OSC), and the rest (CSI).
-// oxlint-disable-next-line no-control-regex
-const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
-// oxlint-disable-next-line no-control-regex
-const CSI = /\x1b\[[0-9;?<>=]*[a-zA-Z~]/g;
-const plain = (raw: string) => raw.replace(OSC, "").replace(CSI, "").replace(/\r/g, "").trim();
-
-/** Runs a command at fish's prompt; resolves with what it printed. */
-async function run(command: string) {
-  const from = screen.length;
-  machine.write(` ${command}\r`);
-  // oxlint-disable-next-line no-control-regex
-  const done = () => /\x1b\]133;D[^\x07]*\x07[\s\S]*\x1b\]133;B/.test(screen.slice(from));
-  await until(`"${command}"`, done);
-  const output = screen.slice(from);
-  return plain(output.slice(output.indexOf("\x07", output.indexOf("\x1b]133;C")) + 1, output.indexOf("\x1b]133;D")));
-}
-
-let failed = 0;
-function check(what: string, ok: boolean, detail = "") {
-  if (!ok) failed++;
-  info(`${ok ? "ok    " : "FAILED"}  ${what}${detail && `  ·  ${detail}`}`);
-}
-
-async function timed<T>(work: () => Promise<T>): Promise<[T, string]> {
-  const started = performance.now();
-  const result = await work();
-  return [result, `${((performance.now() - started) / 1000).toFixed(1)} s`];
-}
+const checks = new Checks();
+const check = checks.check.bind(checks);
 
 step(`the ${name} machine, with a phone plugged in`);
-await machine.loaded();
-machine.resize(100, 32);
-machine.attach("UTC");
-await sleep(1500);
 
 const android = new Phone("adb");
 const adbd = new Adbd(android, browserKey);
@@ -454,5 +387,4 @@ output = await run("usb off; cat /run/usb/adb /run/usb/fastboot");
 check("usb off", output.endsWith("down off\ndown off"), output.split("\n").join(" · "));
 
 await machine.destroy();
-console.log(failed ? `\n${failed} failed` : "\nall well");
-process.exit(failed ? 1 : 0);
+checks.done();
