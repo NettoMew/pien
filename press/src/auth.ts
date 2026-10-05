@@ -336,7 +336,7 @@ export function auth(config: Config, account: Store<Account>, world: World) {
     },
   ];
 
-  return { routes, loggedIn };
+  return { routes, loggedIn, mustBeLoggedIn };
 }
 
 /** What the GitHub popup tells the page. */

@@ -4,3 +4,7 @@
 !press/package.json
 !press/package-lock.json
 !press/src
+!scripts/lib/blog.ts
+!scripts/lib/content.ts
+!image/image.config.ts
+!src/theme.ts

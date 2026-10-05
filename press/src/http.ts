@@ -1,14 +1,19 @@
 // Routes as functions from a Request to a Response, the web's own types, so
 // a test calls them directly; serve() puts them behind node:http.
 
+import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import { extname, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 
 export type Handler = (request: Request, params: Record<string, string>) => Response | Promise<Response>;
 
 export interface Route {
   method: string;
-  /** "/api/auth/passkeys/:id": a colon marks a part that becomes a parameter. */
+  /**
+   * "/api/auth/passkeys/:id": a colon marks a part that becomes a parameter;
+   * a last part of "*" takes the rest of the path, as the parameter "*".
+   */
   path: string;
   handler: Handler;
 }
@@ -25,8 +30,8 @@ export class Refusal extends Error {
 export const json = (body: unknown, init: ResponseInit = {}) => Response.json(body, init);
 
 /** The request's JSON body, refused past `limit` bytes. */
-export async function body<T>(request: Request, limit = 64 << 10): Promise<T> {
-  const text = await read(request, limit);
+export async function body<T>(request: Request, limit = 1 << 20): Promise<T> {
+  const text = (await bytes(request, limit)).toString("utf8");
   try {
     return JSON.parse(text) as T;
   } catch {
@@ -34,7 +39,8 @@ export async function body<T>(request: Request, limit = 64 << 10): Promise<T> {
   }
 }
 
-async function read(request: Request, limit: number): Promise<string> {
+/** The request's body as it came, refused past `limit` bytes. */
+export async function bytes(request: Request, limit: number): Promise<Buffer> {
   if (Number(request.headers.get("content-length") ?? 0) > limit) throw new Refusal(413, "Too large.");
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -43,7 +49,7 @@ async function read(request: Request, limit: number): Promise<string> {
     if (size > limit) throw new Refusal(413, "Too large.");
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
 }
 
 /** The value of cookie `name` in the request, if it has one. */
@@ -81,16 +87,43 @@ export function router(routes: Route[]): (request: Request) => Promise<Response>
 }
 
 function match(pattern: string[], parts: string[]): Record<string, string> | undefined {
-  if (pattern.length !== parts.length) return undefined;
+  const rest = pattern.at(-1) === "*";
+  if (rest ? parts.length < pattern.length : pattern.length !== parts.length) return undefined;
   const params: Record<string, string> = {};
   for (const [i, want] of pattern.entries()) {
     const part = parts[i]!;
-    if (want.startsWith(":")) {
+    if (rest && i === pattern.length - 1) {
+      params["*"] = parts.slice(i).map(decodeURIComponent).join("/");
+    } else if (want.startsWith(":")) {
       if (!part) return undefined;
       params[want.slice(1)] = decodeURIComponent(part);
     } else if (want !== part) return undefined;
   }
   return params;
+}
+
+const TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".json": "application/json",
+  ".xml": "application/rss+xml; charset=utf-8",
+  ".webp": "image/webp",
+};
+
+/**
+ * The files under `dir`, for what nginx serves on the live site (deploy/
+ * nginx.conf): here only for development and tests. `path` is the request's
+ * rest, never let out of `dir`.
+ */
+export async function file(dir: string, path: string): Promise<Response> {
+  const root = resolve(dir);
+  const target = resolve(root, path);
+  if (!target.startsWith(root + sep)) throw new Refusal(404, "Nothing here.");
+  try {
+    const data = await readFile(target);
+    return new Response(data, { headers: { "content-type": TYPES[extname(target)] ?? "application/octet-stream" } });
+  } catch {
+    throw new Refusal(404, "Nothing here.");
+  }
 }
 
 /** Serves `app` on node:http. Behind nginx, which says where requests came from. */

@@ -10,8 +10,14 @@
 //   PRESS_SESSION_KEY_FILE     64 hex digits, the relay's session_key too
 //   PRESS_GITHUB_CLIENT_ID     the GitHub OAuth app; without, no GitHub login
 //   PRESS_GITHUB_SECRET_FILE   its client secret
+//   PRESS_CONTENT              the published writing, a git repository;
+//                              without, no writing from the machine
+//   PRESS_PUBLIC               where press renders what nginx serves
+//   PRESS_DIST                 the built site, for its posts' stylesheet
 
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Places } from "./writing.ts";
 
 export interface Config {
   site: string;
@@ -24,6 +30,7 @@ export interface Config {
   data: string;
   sessionKey: Uint8Array;
   github?: { clientId: string; clientSecret: string };
+  writing?: Places;
 }
 
 const secret = async (file: string) => (await readFile(file, "utf8")).trim();
@@ -44,6 +51,15 @@ export async function configure(env: NodeJS.ProcessEnv = process.env): Promise<C
     data: need("PRESS_DATA"),
     sessionKey,
     ...(clientId && { github: { clientId, clientSecret: await secret(need("PRESS_GITHUB_SECRET_FILE")) } }),
+    ...(env.PRESS_CONTENT && {
+      writing: {
+        store: env.PRESS_CONTENT,
+        drafts: join(need("PRESS_DATA"), "drafts"),
+        pictures: join(need("PRESS_DATA"), "pictures"),
+        public: need("PRESS_PUBLIC"),
+        dist: need("PRESS_DIST"),
+      },
+    }),
   };
 }
 
