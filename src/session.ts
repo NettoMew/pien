@@ -6,6 +6,7 @@
 import wasm from "v86/build/v86.wasm?url";
 import manifest from "virtual:vm-manifest";
 import { downloads, inServiceNamed, type MachineName, machines, v86Options } from "../vm.config.ts";
+import { ask, secret } from "./ask.ts";
 import { pick, put } from "./drop.ts";
 import { Machine } from "./machine.ts";
 import { net, unwire as unwireNet } from "./net/index.ts";
@@ -31,11 +32,13 @@ term.onResize(({ cols, rows }) => live && machine?.resize(cols, rows));
 
 // The guest's `open`, `net`, `drop`, `adb`, `fastboot`, `usb` and `serial`
 // print a private escape sequence; see open.fish, net.fish, drop.fish,
-// __usb.fish and serial.fish. `machine;<name>` asks for another machine.
+// __usb.fish and serial.fish. `machine;<name>` asks for another machine, and
+// `ask;…` is a question with an answer (ask.ts, __ask.fish).
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
-  if (verb === "net" && machine) void net(rest[0] ?? "", rest.slice(1).join(";"), machine);
+  if (verb === "net" && machine) void net(rest[0] ?? "", machine);
+  if (verb === "ask" && machine) void ask(rest, machine);
   if (verb === "usb" && machine) void usb(rest[0] ?? "", machine);
   if (verb === "serial" && machine) void serial(rest[0] ?? "", machine);
   if (verb === "drop" && machine) pick(machine);
@@ -118,9 +121,13 @@ async function resume(started: Machine, name: MachineName) {
   );
 
   // Sets the guest's clock and time zone to the browser's (and, on a cold
-  // boot, starts the session). A cold-booted guest opens its control line
-  // after we got here, and says so: it is greeted again then.
-  const greet = () => started.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  // boot, starts the session), and tells it the secret its questions carry.
+  // A cold-booted guest opens its control line after we got here, and says
+  // so: it is greeted again then.
+  const greet = () => {
+    started.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    started.control(`ask ${secret}`);
+  };
   started.onControl((line) => line === "ready" && greet());
 
   // The snapshot was taken with fish already at its prompt, so put back what

@@ -21,6 +21,9 @@ npm run dev            # http://localhost:5173
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
 | `RELAY=host:port npm run dev` | 开发服务器把 `/relay` 转给那里的中继（默认 127.0.0.1:8095，见 docs/relay.md） |
+| `npm test --prefix press` | press 的测试：软件实现的通行密钥、模拟的 GitHub、和中继对齐的 token |
+| `PRESS=host:port npm run dev` | 开发服务器把 `/api/` 转给那里的 press（默认 127.0.0.1:8096，见 docs/login.md） |
+| `npm run check:login` | 先 `npm run build`：本机起中继和 press，Chrome 的虚拟认证器扮通行密钥，在客户机里把登录和中继走一遍 |
 
 页面加 `?cold` 会冷启动内核，而不是恢复快照（调试用）。
 
@@ -41,7 +44,9 @@ npm run dev            # http://localhost:5173
 
 **页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再滚过一屏开机日志。日志是编的（`boot-log.ts`），节奏却是真的：每一行代表要下载的东西里的一份，下完日志也走完，最后一项服务等机器真正就绪才打上 `ok`；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制。
 
-**联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。
+**联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层加密，前面的 TLS 终结者看不到帧。本站的中继只认站长的登录；谁都可以搭自己的中继（`relay key` 给它一把密钥），用 `net relay <地址>` 指过去。详见 [docs/relay.md](docs/relay.md)。
+
+**登录**（`press/`、`src/account/`，[docs/login.md](docs/login.md)）。只有站长一个账号，没有口令：通行密钥是正门，GitHub 是从新设备回来的后门，弹出窗口里走完，页面和机器都不动。第一个通行密钥要服务器给的一次性码（`press enroll`）。press 是一个 TypeScript 小服务；它签发的登录是自证的 token，中继拿同一把会话密钥自己验，不用问谁。客户机里的命令经一条带暗号的问答通道问页面（`src/ask.ts`），终端里显示出来的文字冒充不了。
 
 **编辑器**。nano，和 [Microsoft Edit](https://github.com/microsoft/edit)（`edit`，也叫 `msedit`）。Edit 不在 Alpine 的仓库里，`image/edit/build.sh` 在 i686 的 Alpine 容器里从固定的版本编译它，链接客户机自己的 musl；查找替换要的 ICU 用到才读。
 
@@ -63,7 +68,7 @@ npm run dev            # http://localhost:5173
 
 ## 部署
 
-`.github/workflows/build.yml` 会从零构建整站（内核、镜像、快照、页面），用 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on` 还需要中继：一个 Docker 容器，nginx 把 `/relay` 转给它（`deploy/nginx.conf`、`deploy/relay.toml.example`，步骤见 [docs/relay.md](docs/relay.md#部署2026-10-05101)）。
+`.github/workflows/build.yml` 会从零构建整站（内核、镜像、快照、页面），用 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on` 和登录还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署2026-10-05101) 和 [docs/login.md](docs/login.md#部署101)）。
 
 ## 实测
 
@@ -79,7 +84,7 @@ npm run dev            # http://localhost:5173
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)；串口见 [docs/serial.md](docs/serial.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)，登录见 [docs/login.md](docs/login.md)；串口见 [docs/serial.md](docs/serial.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
 
 ## 踩过的坑
 

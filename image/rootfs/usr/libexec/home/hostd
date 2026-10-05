@@ -23,6 +23,11 @@
 #   drop <n>         files from the visitor's computer wait in /.drop/<n>
 #                    (src/drop.ts): move them into ~/drop
 #   drop none        … or the visitor chose none
+#   ask <secret>     what the guest's questions to the page carry (src/ask.ts,
+#                    __ask.fish): kept where only the guest's commands read it
+#   said <id> <line> a line of the page's answer to question <id>
+#   done <id> <status>
+#                    … and its end: the question's status
 #
 # Window sizes need no message: the virtio console reports them itself.
 
@@ -169,5 +174,21 @@ while read -r cmd arg; do
 		esac
 		;;
 	drop) drop "$arg" ;;
+	ask)
+		(umask 077 && echo "$arg" > /run/ask/secret)
+		chown guest:guest /run/ask/secret
+		;;
+	said)
+		id=${arg%% *}
+		case $id in "" | *[!0-9]*) continue ;; esac
+		case $arg in *" "*) line=${arg#* } ;; *) line= ;; esac
+		printf '%s\n' "$line" >> "/run/ask/$id"
+		;;
+	done)
+		set -- $arg
+		case $1 in "" | *[!0-9]*) continue ;; esac
+		# Whole or not at all: the guest takes the answer once this appears.
+		echo "${2:-1}" > "/run/ask/$1.part" && mv "/run/ask/$1.part" "/run/ask/$1.done"
+		;;
 	esac
 done

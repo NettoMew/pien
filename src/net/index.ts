@@ -1,7 +1,8 @@
 // `net` on the page's side: the guest's network card, wired to a way out,
-// the relay (`net on`, relay.ts). Only this much loads with the page; the way
-// out is fetched the first time a visitor asks for it. (Cloudflare WARP, the
-// other way, is sealed since 2026-10-05; see docs/warp.md.)
+// a relay (`net on`, relay.ts). Only this much loads with the page; the way
+// out is fetched the first time a visitor asks for it. Which relay, and the
+// login it takes, are the guest's questions (answers.ts). (Cloudflare WARP,
+// the other way, is sealed since 2026-10-05; see docs/warp.md.)
 //
 // The guest learns what happened over the control line (hostd):
 //   net up <way> <address/prefix> <gateway> <dns> <mtu>
@@ -26,16 +27,13 @@ const ways = new Map<string, Way>();
 
 let queue: Promise<unknown> = Promise.resolve();
 
-/**
- * `net on`, `net off`, `net login;<password>`, `net logout`, one after
- * another, so a login is done before the `on` that follows it looks for the key.
- */
-export function net(verb: string, argument: string, machine: Machine) {
-  queue = queue.then(() => handle(verb, argument, machine)).catch((error) => console.error("net:", error));
+/** `net on` and `net off`, one after another. */
+export function net(verb: string, machine: Machine) {
+  queue = queue.then(() => handle(verb, machine)).catch((error) => console.error("net:", error));
   return queue;
 }
 
-async function handle(verb: string, argument: string, machine: Machine) {
+async function handle(verb: string, machine: Machine) {
   if (wired !== machine) {
     machine.onFrame((frame) => wired === machine && active?.frame(frame));
     wired = machine;
@@ -48,10 +46,6 @@ async function handle(verb: string, argument: string, machine: Machine) {
     }
     case "off":
       return active?.disconnect();
-    case "login":
-      return (await relay).login(decodeURIComponent(argument));
-    case "logout":
-      return (await relay).logout();
   }
 }
 

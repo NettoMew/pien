@@ -81,14 +81,19 @@ function vmManifest(): Plugin {
   };
 }
 
-// `net on` reaches the relay (relay/) at <base>relay; in development, one
-// running here — or, through an SSH forward, somewhere else (RELAY=host:port).
-const relay = { [`/relay`]: { target: `ws://${process.env.RELAY ?? "127.0.0.1:8095"}`, ws: true } };
+// The site's two services, as the live site reaches them (deploy/nginx.conf):
+// the relay (relay/) at <base>relay, for `net on`, and press (press/) at
+// <base>api/, for logging in. In development, ones running here — or,
+// through an SSH forward, somewhere else (RELAY=host:port, PRESS=host:port).
+const services = {
+  "/relay": { target: `ws://${process.env.RELAY ?? "127.0.0.1:8095"}`, ws: true },
+  "/api": { target: `http://${process.env.PRESS ?? "127.0.0.1:8096"}` },
+};
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), palette(), vmManifest(), blog()],
-  server: { proxy: relay },
-  preview: { proxy: relay },
+  server: { proxy: services },
+  preview: { proxy: services },
   build: {
     assetsInlineLimit: 0, // keep v86.wasm a separate, cacheable file
     // Nearly everything is needed up front, but the libraries change far less

@@ -1,6 +1,6 @@
 # 中继（`net on`）
 
-访客在终端里敲 `net on`，这台虚拟机就拿到一段私有的网络，经中继出门：`ip a`、`curl`、`git`、真实的 `ping`、DNS 都能用。设计上只给站长自己用：要口令。
+访客在终端里敲 `net on`，这台虚拟机就拿到一段私有的网络，经中继出门：`ip a`、`curl`、`git`、真实的 `ping`、DNS 都能用。本站的中继只给站长用：先登录（[login.md](login.md)）。谁都可以搭一个自己的中继，用 `net relay <地址>` 指过去。
 
 ```
 v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层加密══▶ Caddy ──▶ relay（relay/）──▶ 互联网
@@ -8,7 +8,7 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
                                                                   10.0.2.15 访客 · 10.0.2.2 网关 · 10.0.2.3 DNS
 ```
 
-另一条路是 Cloudflare WARP（`net warp`，试验，见 [warp.md](warp.md)）。两者共用一个入口（`src/net/index.ts`），同一时刻只接一种。
+（另一条路 Cloudflare WARP 已封存，见 [warp.md](warp.md)。）
 
 ## 中继：`relay/`
 
@@ -34,16 +34,20 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
 
 ```
 页面 → 中继   "GHR1" ‖ 页面随机数(16) ‖ 页面 P-256 临时公钥(65)
+          或   "GHR2" ‖ 页面随机数(16) ‖ 页面 P-256 临时公钥(65) ‖ 登录的 token(57)
 中继 → 页面   中继随机数(16) ‖ 中继 P-256 临时公钥(65)
-密钥          HKDF-SHA256(ikm = 预共享密钥 ‖ ECDH, salt = 两个随机数, info = "guest@home relay v1")
+密钥          HKDF-SHA256(ikm = 密钥 ‖ ECDH, salt = 两个随机数, info = "guest@home relay v1")
               → 页面→中继、中继→页面各一把 AES-256-GCM 密钥
 之后          每条消息 AES-256-GCM，nonce = 4 个零字节 ‖ 64 位计数器
               页面先发 "hello"，中继回 "welcome"，然后一条消息一个以太网帧
 ```
 
-- 预共享密钥是口令的 PBKDF2-HMAC-SHA256（60 万轮，盐 `guest@home relay`）。`net login` 在页面里算出它，**只存密钥，口令本身既不存也不上线**；中继的配置里也只放密钥（`relay key` 生成）。
+- 密钥有两种，中继配哪种就认哪种（也可以两种都配）：
+  - **本站中继认登录**（`session_key`，GHR2）：页面把登录的 token 附在 hello 后面，中继用会话密钥自己验它、自己算出通道密钥（见 [login.md](login.md)），不问 press，也没有登录列表。
+  - **自己的中继认自己的密钥**（`key`，GHR1）：`relay key` 打印 32 个随机字节；在页面里 `net relay <地址>` 时粘贴一次，按地址记在浏览器里。
+- 两种情况下密钥本身都不上线。
 - 临时 ECDH 提供前向保密；两边的随机数让旧消息无法重放，计数器保证顺序。
-- 口令错了，中继在一秒后以 1008 关闭，访客看到「中继不认这个口令」。
+- 密钥或登录不对，中继在一秒后以 1008 关闭：本站中继的访客看到「中继不认这个登录：net login」；自己的中继，页面忘掉那把密钥，下次再问。
 - 页面那边全部用 WebCrypto 实现，不需要 wasm。
 
 ### 配置
@@ -52,7 +56,8 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
 
 ```toml
 listen = "127.0.0.1:8095"
-key = "…"                       # relay key < 口令
+key = "…"                       # 这个中继自己的密钥：relay key
+session_key = "…"               # 或者本站的会话密钥：认站长的登录
 
 [dns]
 upstream = "cloudflare-tls"     # quad9-tls、google-tls、system，或一个地址
@@ -78,18 +83,21 @@ idle = 1800                     # 秒
 
 ## 页面：`src/net/`
 
-- `index.ts`（常驻）：`net on`、`net off`、`net login`、`net logout`、`net warp`、`net forget` 依次排队处理；同一时刻只有一种方式接在网卡上，切换时旧的那种安静地断开。
-- `relay.ts`（用到时才加载）：口令派生密钥、握手、逐帧加解密（保证顺序）、页面从后台回来时自动重连。连没连上，客户机里的 `net` 会说。
+- `index.ts`（常驻）：`net on`、`net off` 依次排队处理。
+- `answers.ts`（用到时才加载）：客户机的提问（`src/ask.ts`）：登录、通行密钥、GitHub、选哪个中继。
+- `relays.ts`：走哪个中继：本站的，或者访客自己的（地址和密钥）。
+- `relay.ts`（用到时才加载）：握手（带登录或自己的密钥）、逐帧加解密（保证顺序）、页面从后台回来时自动重连。连没连上，客户机里的 `net` 会说。中继在握手中途挂断（密钥不对）时，等回复的那一步也随之结束，后面的 `net` 命令不会被卡住。
 - 中继地址：构建时用 `VITE_RELAY_URL` 指定，默认是同源的 `<base>relay`。
 
 ## 客户机
 
 - `net on` 时，hostd 收到 `net up relay 10.0.2.15/24 10.0.2.2 10.0.2.3 1500`，配好 eth0、路由和 `/etc/resolv.conf`；没联网时 eth0 没有地址，程序会立刻报 Network unreachable，不会卡住。
-- 第一次 `net on` 发现没有口令时，直接提示输入，输入完自动重试。
+- `net on` 走本站中继却没登录时，先跑一遍 `net login`，登录完自动重试。
+- `net relay <地址>` 换成自己的中继，第一次会问它的密钥（`read -s`，手机上有粘贴键）；`net relay reset` 换回本站的。
 - 访客用户的 PATH 加了 `/sbin`，`ip a`、`ip route` 直接能敲。
-- 失败时给出中文原因：没口令、口令不对、中继正忙、连不上中继、连接断了……
+- 失败时说明原因：没登录、登录不被认、自己的中继缺密钥或密钥不对、中继正忙、连不上中继、连接断了……
 
-## 实测（本机浏览器 → SSH 转发 → v2in0 上的中继容器，香港）
+## 实测（2026-10-05，还用口令的时候；握手之后的一切没变。本机浏览器 → SSH 转发 → v2in0 上的中继容器，香港）
 
 | | |
 |---|---|
@@ -111,9 +119,9 @@ idle = 1800                     # 秒
 ## 本地开发
 
 ```sh
-cd relay && cargo run -- key            # 输入口令，得到密钥
+cd relay && cargo run -- key            # 打印一把随机密钥
 cat > relay.toml <<EOF
-key = "…"
+key = "…"                               # 页面里 net relay ws://127.0.0.1:8095/ 时粘贴它
 EOF
 cargo run -- relay.toml                 # 监听 127.0.0.1:8095；Windows 上没有 ping
 npm run dev                             # /relay 代理到 127.0.0.1:8095（RELAY=host:port 可改）
@@ -137,7 +145,7 @@ RELAY=127.0.0.1:18095 npm run dev
                                                      homepage-relay:8095（不发布端口）──▶ 互联网，出口 154.86.23.202
 ```
 
-- **中继**：容器 `homepage-relay`，镜像 `homepage-relay:<提交>`，以 65534（nobody）运行，`--restart unless-stopped`，只接在 Docker 网络 `homepage` 上。配置在 `/srv/homepage-relay/relay.toml`（属主 65534，权限 600），只有密钥，没有口令；格式见 `deploy/relay.toml.example`：最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
+- **中继**：容器 `homepage-relay`，镜像 `homepage-relay:<提交>`，以 65534（nobody）运行，`--restart unless-stopped`，只接在 Docker 网络 `homepage` 上。配置在 `/srv/homepage-relay/relay.toml`（属主 65534，权限 600），只有会话密钥（和 press 的相同）；格式见 `deploy/relay.toml.example`：最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
 - **nginx**：`deploy/nginx.conf` 新增 `location = /relay`，按请求经 Docker 的 DNS 找到中继，所以中继不在时 nginx 也能启动；这一段不写访问日志。容器 `homepage-demo` 多接了 `homepage` 网络。
 - **Caddy（.100）**：没改，它本来就把整个站点连同 WebSocket 转给 .101。
 
@@ -156,8 +164,8 @@ docker network connect homepage homepage-demo
 docker restart homepage-demo
 ```
 
-**换口令**：在任何一台机器上 `relay key`（输入新口令）得到密钥，写进 `/srv/homepage-relay/relay.toml`，`docker restart homepage-relay`；浏览器里 `net login` 输入新口令。
+**换会话密钥**：见 [login.md](login.md#部署101)，press 和中继要一起换，所有登录随之作废。
 
 **回滚**：`/srv/homepage-demo/` 下有带时间戳的 `nginx.conf.bak-*` 和 `site.bak-*`；挪回去，`docker network disconnect homepage homepage-demo`，`docker restart homepage-demo`，再 `docker rm -f homepage-relay`。
 
-**上线后实测**（本机 Chrome 打开 https://test-demo.arc.moe/）：`net on` 5.2 秒（含输入口令）；出口 154.86.23.202；ping 1.1.1.1 平均 41 ms；github 200；下载 1.9 MB/s；.101 自己的内网地址和 10.0.0.1 都被拦下；中继日志里只有计数。
+**上线后实测**（2026-10-05，还用口令的时候；本机 Chrome 打开 https://test-demo.arc.moe/）：`net on` 5.2 秒（含输入口令）；出口 154.86.23.202；ping 1.1.1.1 平均 41 ms；github 200；下载 1.9 MB/s；.101 自己的内网地址和 10.0.0.1 都被拦下；中继日志里只有计数。

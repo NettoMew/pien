@@ -1,55 +1,36 @@
-// `net on`: the guest's network card, through the relay (relay/), over one
+// `net on`: the guest's network card, through a relay (relay/), over one
 // WebSocket. Every frame travels sealed — the protocol is described in
-// relay/src/channel.rs, and WebCrypto does all of it. The password never
-// leaves this page; only the key made from it is kept, in this browser.
+// relay/src/channel.rs, and WebCrypto does all of it. This site's relay
+// takes the owner's login (../account/); a visitor's own relay, the key it
+// was given (relays.ts). Neither key ever travels.
 
+import { current } from "../account/login.ts";
 import type { Machine } from "../machine.ts";
 import type { Way } from "./index.ts";
+import { chosen, forget } from "./relays.ts";
 
-const STORE = "relay";
-const URL_ = import.meta.env.VITE_RELAY_URL || `${import.meta.env.BASE_URL}relay`;
 /** QEMU's user network, as the relay serves it (relay/src/session.rs). */
 const UP = "net up relay 10.0.2.15/24 10.0.2.2 10.0.2.3 1500";
 const HANDSHAKE = 15_000;
 /** What the relay's close codes mean (relay/src/server.rs), in the guest's words (net.fish). */
-const CLOSED: Record<number, string> = { 1008: "badkey", 1013: "busy", 4001: "quota", 4002: "idle" };
+const CLOSED: Record<number, string> = { 1013: "busy", 4001: "quota", 4002: "idle" };
 
 const subtle = crypto.subtle;
 const text = (s: string) => new TextEncoder().encode(s);
+/** A hello with a relay's own key, or with the site's login token. */
 const MAGIC = text("GHR1");
+const MAGIC_TOKEN = text("GHR2");
 // The machine's old name, kept: it is part of every key (relay/src/channel.rs).
 const INFO = text("guest@home relay v1");
 const HELLO = "hello";
 const WELCOME = "welcome";
 
-/** PBKDF2-HMAC-SHA256 of the password, as `relay key` makes it. */
-export async function login(password: string) {
-  const base = await subtle.importKey("raw", text(password), "PBKDF2", false, ["deriveBits"]);
-  const params = { name: "PBKDF2", hash: "SHA-256", salt: text("guest@home relay"), iterations: 600_000 };
-  const key = new Uint8Array(await subtle.deriveBits(params, base, 256));
-  store(btoa(String.fromCharCode(...key)));
-}
+const fromBase64Url = (data: string) => Uint8Array.from(atob(data.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 
-export function logout() {
-  store(null);
-}
-
-function stored(): Uint8Array<ArrayBuffer> | null {
-  try {
-    const key = localStorage.getItem(STORE);
-    return key ? Uint8Array.from(atob(key), (c) => c.charCodeAt(0)) : null;
-  } catch {
-    return null;
-  }
-}
-
-function store(key: string | null) {
-  try {
-    if (key) localStorage.setItem(STORE, key);
-    else localStorage.removeItem(STORE);
-  } catch {
-    // Private windows may refuse; the key then lasts this visit only.
-  }
+/** How to open the channel: what the hello says, and the key it opens with. */
+interface Opening {
+  hello: (nonce: Uint8Array, point: Uint8Array) => Uint8Array<ArrayBuffer>;
+  key: Uint8Array<ArrayBuffer>;
 }
 
 export class Relay implements Way {
@@ -70,24 +51,35 @@ export class Relay implements Way {
     this.wanted = true;
     if (this.state === "up") return this.machine.control(UP);
     if (this.state === "connecting") return;
-    const key = stored();
-    if (!key) return this.fail("nokey", true);
+    const relay = chosen();
+    const login = current();
+    let opening: Opening;
+    if (relay.key) opening = { hello: (nonce, point) => concat(MAGIC, nonce, point), key: relay.key };
+    else if (relay.own) return this.fail("nokey", true);
+    else if (login) {
+      const token = fromBase64Url(login.token);
+      opening = { hello: (nonce, point) => concat(MAGIC_TOKEN, nonce, point, token), key: fromBase64Url(login.key) };
+    } else return this.fail("login", true);
     this.state = "connecting";
 
-    const url = new URL(URL_, location.href);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(relay.url);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     const inbox = new Inbox(socket);
     socket.onclose = (event) => {
       if (this.socket !== socket) return;
-      const why = CLOSED[event.code] ?? (this.state === "up" ? "closed" : "norelay");
+      let why = CLOSED[event.code] ?? (this.state === "up" ? "closed" : "norelay");
+      // Turned away: the key, or the login, was not the relay's. A wrong key
+      // is forgotten, so that the next try asks for it again.
+      if (event.code === 1008) {
+        why = relay.own ? "badkey" : "badlogin";
+        if (relay.own) forget(relay.url);
+      }
       this.fail(why);
     };
 
     try {
-      this.channel = await Channel.open(socket, inbox, key);
+      this.channel = await Channel.open(socket, inbox, opening);
     } catch {
       return socket.readyState === WebSocket.OPEN ? this.fail("protocol") : undefined; // onclose says why
     }
@@ -135,24 +127,38 @@ export class Relay implements Way {
 /** Messages from the socket, waited for one at a time, then handed over as they come. */
 class Inbox {
   private readonly queue: ArrayBuffer[] = [];
-  private waiting?: (message: ArrayBuffer) => void;
+  private waiting?: { resolve: (message: ArrayBuffer) => void; reject: (error: Error) => void };
   private sink?: (message: ArrayBuffer) => void;
+  private closed = false;
 
   constructor(socket: WebSocket) {
     socket.onmessage = ({ data }: MessageEvent<ArrayBuffer>) => {
       if (this.sink) this.sink(data);
-      else if (this.waiting) this.waiting(data);
+      else if (this.waiting) this.waiting.resolve(data);
       else this.queue.push(data);
     };
+    // A relay that turns the key away hangs up instead of answering: whoever
+    // waits for the answer must hear of that too.
+    socket.addEventListener("close", () => {
+      this.closed = true;
+      this.waiting?.reject(new Error("closed"));
+    });
   }
 
   next(): Promise<ArrayBuffer> {
     const queued = this.queue.shift();
     if (queued) return Promise.resolve(queued);
-    return new Promise((resolve) => {
-      this.waiting = (message) => {
-        this.waiting = undefined;
-        resolve(message);
+    if (this.closed) return Promise.reject(new Error("closed"));
+    return new Promise((resolve, reject) => {
+      this.waiting = {
+        resolve: (message) => {
+          this.waiting = undefined;
+          resolve(message);
+        },
+        reject: (error) => {
+          this.waiting = undefined;
+          reject(error);
+        },
       };
     });
   }
@@ -179,7 +185,7 @@ class Channel {
     this.opening = opening;
   }
 
-  static async open(socket: WebSocket, inbox: Inbox, key: Uint8Array<ArrayBuffer>): Promise<Channel> {
+  static async open(socket: WebSocket, inbox: Inbox, { hello, key }: Opening): Promise<Channel> {
     await new Promise<void>((resolve, reject) => {
       if (socket.readyState === WebSocket.OPEN) return resolve();
       socket.addEventListener("open", () => resolve(), { once: true });
@@ -190,7 +196,7 @@ class Channel {
       const ecdh = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
       const mine = new Uint8Array(await subtle.exportKey("raw", ecdh.publicKey));
       const nonce = crypto.getRandomValues(new Uint8Array(16));
-      socket.send(concat(MAGIC, nonce, mine));
+      socket.send(hello(nonce, mine));
 
       const reply = new Uint8Array(await inbox.next());
       if (reply.length !== 16 + 65) throw new Error("not a reply");

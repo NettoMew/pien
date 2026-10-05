@@ -59,7 +59,11 @@ for tool in adb fastboot; do
 	chmod 666 "/run/usb/$tool"
 done
 
-# The network: loopback now, eth0 once a visitor types `net warp` (see hostd).
+# The guest's questions to the page (__ask.fish): hostd keeps the secret
+# they carry here, and writes the answers; only the guest may read them.
+install -d -m 700 -o guest -g guest /run/ask
+
+# The network: loopback now, eth0 once a visitor types `net on` (see hostd).
 # The state file is the guest's to mark "waiting" in; hostd writes the rest.
 ip link set lo up
 mkdir -p /run/net
