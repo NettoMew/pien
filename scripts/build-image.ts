@@ -16,7 +16,7 @@ import { join, relative, sep } from "node:path";
 import config from "../image/image.config.ts";
 import { BLOBS } from "../vm.config.ts";
 import { Repository } from "./lib/apk.ts";
-import { CONTENT, frontMatter } from "./lib/content.ts";
+import { frontMatter, indexOf, readWriting } from "./lib/content.ts";
 import { cached } from "./lib/fetch.ts";
 import { editBuild } from "./lib/edit.ts";
 import { kernelBuild } from "./lib/kernel.ts";
@@ -113,27 +113,21 @@ info(`Alpine ${alpine} · ${commands.size} commands`);
 step("content");
 const { uid, gid, home } = config.user;
 const owner = { uid, gid };
-const content = CONTENT;
-const posts: string[][] = [];
+// The seed of the writing; the page lays the server's over it when that is
+// newer (src/content.ts), by the index the manifest keeps.
+const writing = await readWriting();
+const content = indexOf(writing);
 
 rootfs.mkdir(home, owner);
-for await (const path of walk(content)) {
-  const target = home + guestPath(content, path);
-  const data = await unix(path);
-  const { meta } = frontMatter(data);
-  const mtime = meta.date ? Math.floor(Date.parse(meta.date) / 1000) : BUILT;
-
+for (const { path, data } of writing) {
+  const target = `${home}/${path}`;
+  const { meta } = path.endsWith(".md") ? frontMatter(new TextDecoder().decode(data)) : { meta: {} as Record<string, string> };
+  const mtime = Math.floor(Date.parse(meta.date ?? "") / 1000) || BUILT;
   rootfs.mkdir(target.slice(0, target.lastIndexOf("/")), owner);
-  rootfs.write(target, data, { ...owner, mtime });
-
-  if (target.startsWith(`${home}/blog/`) && meta.title) {
-    posts.push([meta.date ?? "", target.slice(home.length + 6), meta.title]);
-  }
-  info(`${target}  ${size(Buffer.byteLength(data))}`);
+  rootfs.write(target, Buffer.from(data), { ...owner, mtime });
+  info(`${target}  ${size(data.length)}`);
 }
-
-posts.sort((a, b) => b[0]!.localeCompare(a[0]!));
-rootfs.write("/usr/share/home/posts", posts.map((p) => p.join("\t") + "\n").join(""));
+rootfs.write("/usr/share/home/posts", content.posts.map((post) => post.join("\t") + "\n").join(""));
 
 // ─── Edit ────────────────────────────────────────────────────────────────────
 
@@ -197,6 +191,7 @@ await writeManifest({
   // Exactly what went in: the workbench's disk is built against these.
   packages: Object.fromEntries(packages.map((pkg) => [pkg.name, pkg.version]).sort(([a], [b]) => a!.localeCompare(b!))),
   files: { fsJson: await putHashed("fs.json", Buffer.from(fsJson)), bios: biosFile, vgaBios: vgaBiosFile, kernel: kernelFile },
+  content,
   // Neither the disk nor the snapshots match a new image; their builders add new ones.
   snapshots: {},
 });

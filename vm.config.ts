@@ -78,8 +78,23 @@ export interface Manifest {
     versions: Record<string, string>;
   };
   snapshots: Partial<Record<MachineName, Snapshot>>;
+  /** The writing the image's home holds, by the index the server's is compared with (src/content.ts). */
+  content: ContentIndex;
   /** How big each of the files above is, in bytes (scripts/lib/manifest.ts measures them). */
   sizes: Record<string, number>;
+}
+
+/**
+ * The writing as one list (scripts/lib/content.ts makes it): what a machine
+ * was built with, and what press serves as /content/index.json.
+ */
+export interface ContentIndex {
+  /** Changes with any file, and only then. */
+  id: string;
+  /** Every file, by its path in the guest's home. */
+  files: { path: string; sha256: string; size: number }[];
+  /** Newest first, as `blog` lists them (/usr/share/home/posts): date, file name, title. */
+  posts: [date: string, file: string, title: string][];
 }
 
 /**

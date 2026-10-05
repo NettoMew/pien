@@ -3,8 +3,8 @@ import react from "@vitejs/plugin-react";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
-import { feed, indexPage, postLinks, postPage, type Site } from "./scripts/lib/blog.ts";
-import { readPosts } from "./scripts/lib/content.ts";
+import { pages, postLinks, type Site } from "./scripts/lib/blog.ts";
+import { readWriting } from "./scripts/lib/content.ts";
 import { theme, themeCss } from "./src/theme.ts";
 
 // The terminal's palette (src/theme.ts) at the top of the page's head, as
@@ -20,30 +20,24 @@ function palette(): Plugin {
   };
 }
 
-// The posts as web pages (blog/<slug>/), an index (blog/) and a feed
-// (feed.xml): rendered per request in dev, written out by the build. Their
-// stylesheet, src/blog.css, is a build entry of its own (see below). The
-// homepage's <noscript> lists them too.
+// The writing in content/ as web pages (blog/, blog/<slug>/, moments/) and a
+// feed (feed.xml): rendered per request in dev, written out by the build. On
+// the server, press renders them anew from its store whenever the writing
+// changes, with this build's stylesheet, which it finds in Vite's manifest
+// (below). The homepage's <noscript> lists the posts too.
 const BLOG_CSS = "src/blog.css";
 
 function blog(): Plugin {
   let site: Site;
-  const pages = async (stylesheet: string) => {
-    const posts = await readPosts();
-    return new Map([
-      ["blog/index.html", indexPage(site, stylesheet, posts)],
-      ...posts.map((post) => [`blog/${post.slug}/index.html`, postPage(site, stylesheet, post)] as const),
-      ["feed.xml", feed(site, posts)],
-    ]);
-  };
+  const all = async (stylesheet: string) => pages(site, stylesheet, await readWriting());
   return {
     name: "blog",
     configResolved: (config) => void (site = { base: config.base, url: (process.env.SITE_URL ?? "").replace(/\/$/, "") }),
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = decodeURIComponent((req.url ?? "/").split("?")[0]!).slice(site.base.length);
-        const all = await pages(`${site.base}${BLOG_CSS}`);
-        const body = all.get(path) ?? all.get(`${path.replace(/\/$/, "")}/index.html`);
+        const rendered = await all(`${site.base}${BLOG_CSS}`);
+        const body = rendered.get(path) ?? rendered.get(`${path.replace(/\/$/, "")}/index.html`);
         if (!body) return next();
         res.setHeader("Content-Type", path.endsWith(".xml") ? "application/rss+xml; charset=utf-8" : "text/html; charset=utf-8");
         res.end(body);
@@ -52,11 +46,11 @@ function blog(): Plugin {
     async generateBundle(_, bundle) {
       const css = Object.values(bundle).find((file) => file.type === "asset" && file.originalFileNames.includes(BLOG_CSS));
       if (!css) return this.error(`${BLOG_CSS} did not come out of the build`);
-      for (const [fileName, source] of await pages(`${site.base}${css.fileName}`)) {
+      for (const [fileName, source] of await all(`${site.base}${css.fileName}`)) {
         this.emitFile({ type: "asset", fileName, source });
       }
     },
-    transformIndexHtml: async (html) => html.replace("<!-- posts -->", postLinks(site, await readPosts())),
+    transformIndexHtml: async (html) => html.replace("<!-- posts -->", postLinks(site, await readWriting())),
   };
 }
 
@@ -113,5 +107,6 @@ export default defineConfig({
       },
     },
     chunkSizeWarningLimit: 1024, // the machine's chunk is most of a megabyte by itself
+    manifest: true, // .vite/manifest.json: where press finds the posts' stylesheet
   },
 });
