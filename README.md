@@ -6,7 +6,7 @@
 npm install
 npm run build:kernel   # 在 Docker 里编译内核；本机没有 Docker 时：BUILD_HOST=<Linux 主机> npm run build:kernel
 npm run build:tools    # 同样在 Docker 里编译 Alpine 没有的工具（image/tools/，i686 的 Alpine 容器）
-npm run build:vm       # 构建镜像，再在 Node 里开机、存一份快照
+npm run build:vm       # 构建镜像，再在 Node 里开机、存一份快照，记下 Python 工具启动时读的文件
 npm run dev            # http://localhost:5173
 ```
 
@@ -39,7 +39,7 @@ npm run dev            # http://localhost:5173
 
 - 一份目录树，只有元数据；
 - 每个文件一个块，按内容哈希命名，客户机第一次读到时才下载；
-- 每个程序要加载的共享库（读 ELF 的 DT_NEEDED，一路追下去，`scripts/lib/libraries.ts`）。客户机第一次读到某个程序时，页面把它的库一起取来（`src/prefetch.ts`），而不是等动态链接器一个接一个地要，一个一来回。musl 和 fish 自己用的库本来就在内存里，不算在内。
+- 每个程序启动时要读的文件：它要加载的共享库（读 ELF 的 DT_NEEDED，一路追下去，`scripts/lib/libraries.ts`）；Python 写的工具不说自己要什么，一启动就 import 几百个模块，就在一台从快照恢复的机器里把它们各跑一次，记下读了哪些（`scripts/build-prefetch.ts`）。客户机第一次读到某个程序时，页面把这些一起取来（`src/prefetch.ts`），而不是等动态链接器、Python 一个接一个地要，一个一来回。musl 和 fish 自己用的库本来就在内存里，不算在内。
 
 客户机里的 fish 是原装的：提示符、配色、补全都没改，只关掉了欢迎语。自带的脚本和 `md.awk` 也只按名字用颜色（`cyan`、`brblack`……），每种颜色长什么样，由终端的调色板（`src/theme.ts`）决定。主机名在 `image/image.config.ts`，`/etc/hostname`、`/etc/hosts` 和页面标题都从它来。
 
@@ -53,7 +53,7 @@ npm run dev            # http://localhost:5173
 
 **编辑器**。nano，和 [Microsoft Edit](https://github.com/microsoft/edit)（`edit`，也叫 `msedit`）。Edit 不在 Alpine 的仓库里，`image/tools/edit/build.sh` 在 i686 的 Alpine 容器里从固定的版本编译它，链接客户机自己的 musl；查找替换要的 ICU 用到才读。
 
-**USB 设备**（`src/usb/`，[docs/usb.md](docs/usb.md)）。访客电脑上的 USB 设备经 USB/IP 交给客户机：页面是一个 usbipd，客户机内核里的 vhci-hcd 把设备当成插在自己身上的来枚举，adb、fastboot、dfu-util 照常用它们，用到时自己去借。
+**USB 设备**（`src/usb/`，[docs/usb.md](docs/usb.md)）。访客电脑上的 USB 设备经 USB/IP 交给客户机：页面是一个 usbipd，客户机内核里的 vhci-hcd 把设备当成插在自己身上的来枚举，adb、fastboot、dfu-util、openocd、flashrom、picotool，还有瑞芯微、全志、联发科、高通的刷机工具照常用它们，用到时自己去借。
 
 **工作台**（`image/workbench/`，已封存）。一台 768 MB 的大机器，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim。
 
@@ -86,7 +86,7 @@ npm run dev            # http://localhost:5173
 | 整个系统 | 1763 个文件块，92 MB，压缩后 26 MB，全部按需加载 |
 | `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
 | 串口 | 假线上 64 KB 在 1500000 波特下往返 1.4 秒；`sb` 往假 U-Boot 传 50 KB 1.5 秒；页面这一侧用到才加载 |
-| 程序第一次运行 | 网络延迟 100 ms 时，`adb version` 9.0 秒 → 2.7 秒（它要 57 个库），`curl --version` 2.7 秒 → 1.7 秒：页面把库一起取来 |
+| 程序第一次运行 | 网络延迟 100 ms 时，`adb version` 9.0 秒 → 2.7 秒（它要 57 个库），`curl --version` 2.7 秒 → 1.7 秒，`esptool version` 52.9 秒 → 15.9 秒（352 个文件）：页面把它们一起取来 |
 
 ## 接下来
 

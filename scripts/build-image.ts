@@ -187,9 +187,10 @@ for (const name of await readdir(blobDir)) {
 }
 
 const fsJson = JSON.stringify(json);
-// Each program's libraries, for the page to fetch together (src/prefetch.ts).
+// Each program's libraries, for the page to fetch together (src/prefetch.ts);
+// build-prefetch adds what the programs it traces read besides.
 const linked = libraries(rootfs);
-const librariesFile = await putHashed("libraries.json", Buffer.from(JSON.stringify(linked)));
+const prefetchFile = await putHashed("prefetch.json", Buffer.from(JSON.stringify(linked)));
 await writeManifest({
   hostname: config.hostname,
   arch: "i686",
@@ -203,7 +204,7 @@ await writeManifest({
     bios: biosFile,
     vgaBios: vgaBiosFile,
     kernel: kernelFile,
-    libraries: librariesFile,
+    prefetch: prefetchFile,
   },
   content,
   // Neither the disk nor the snapshots match a new image; their builders add new ones.

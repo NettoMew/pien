@@ -8,8 +8,8 @@
 // build-image picks them up from there.
 
 import { existsSync } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { buildHost, runContainer } from "./lib/docker.ts";
 import { info, size, step } from "./lib/log.ts";
 import { RUN, tools } from "./lib/tools.ts";
@@ -34,5 +34,9 @@ for (const tool of all) {
     process.exit(1);
   }
   await rename(partial, tool.file);
+  // Its builds of before are of no more use.
+  for (const old of await readdir(dirname(tool.file))) {
+    if (old.startsWith(`${tool.name}-`) && old.endsWith(".tar") && join(dirname(tool.file), old) !== tool.file) await rm(join(dirname(tool.file), old));
+  }
   info(`${size((await stat(tool.file)).size)} · ${((performance.now() - started) / 1000).toFixed(0)} s · ${tool.file}`);
 }

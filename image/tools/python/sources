@@ -1,0 +1,8 @@
+# The tools published on GitHub alone, each pinned by its commit.
+# name      repository                            commit
+
+# mtkclient: MediaTek's chips, in their boot ROM or preloader
+mtkclient   https://github.com/bkerler/mtkclient   cd25cf9c1ff6d36e82697ac2c798e69e9cfb78c3
+
+# edl: Qualcomm's, in their emergency download mode (9008)
+edl         https://github.com/bkerler/edl         1cda1a616748d608667b2d13b73a28d3197ceb45

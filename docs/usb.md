@@ -19,6 +19,18 @@ guest@zutto-issho ~> usb
 | `adb` | 打开了 USB 调试的安卓手机（接口 ff/42/01） |
 | `fastboot` | bootloader 里的安卓手机（ff/42/03） |
 | `dfu-util` | DFU 设备（类别 fe/01），比如 STM32 ROM 里的 bootloader |
+| `rkdeveloptool` | 瑞芯微的芯片，Maskrom 或者它的 loader 里（2207） |
+| `sunxi-fel` | 全志的芯片，FEL 模式（1f3a:efe8） |
+| `picotool` | 树莓派的 RP2040、RP2350，BOOTSEL 里或者运行着（2e8a） |
+| `mtk` | 联发科的芯片，boot ROM 或 preloader 里，mtkclient 认的那些 |
+| `edl` | 高通的芯片，紧急下载模式（9008），edl 认的那些 |
+| `openocd` | 调试器：DAPLink、树莓派的、ST-Link、J-Link、FTDI、乐鑫的、WCH-Link、NXP 的、Keil 的、Olimex 的 |
+| `flashrom` | SPI flash 编程器：CH341A、CH347、FTDI、Dediprog、DirtyJTAG |
+| `avrdude` | 它的 USB 编程器：USBasp、USBtinyISP、Atmel-ICE、PICkit 这些；串口的走 `serial`（[docs/serial.md](serial.md)） |
+
+给了设备路径（`flashrom -p serprog:dev=/dev/ttyUSB0`）、只问帮助或者版本的，不去借。都在 `/etc/fish/conf.d/usb-tools.fish` 的一张表里，按厂商或类别写，表外的设备用 `usb attach`。
+
+picotool 不在 Alpine 里，在 `image/tools/picotool/` 照它的 2.3.1 编译；mtkclient 和 edl 只在 GitHub 上，固定在各自的一次提交，和 esptool 一样装进 Python 那一层（`image/tools/python/`），依赖用 Alpine 的包。edl 的 loader（各家手机的 firehose 程序）在另一个仓库，有几百 MB，不随镜像：拖到页面上，用 `--loader` 指给它。
 
 ```
 adb、fastboot、dfu-util ──usbfs──▶ 客户机的内核 ──vhci-hcd（USB/IP）──TCP──▶ socat（hostd 启动）
@@ -56,7 +68,8 @@ adb、fastboot、dfu-util ──usbfs──▶ 客户机的内核 ──vhci-hcd
 - 只有 Chromium 系的浏览器有 WebUSB：电脑和 Android 上的 Chrome、Edge。
 - Windows 上，设备要用 WinUSB 驱动，浏览器才拿得到它：安卓手机装 Google USB Driver；别的设备可以用 [Zadig](https://zadig.akeo.ie/) 换成 WinUSB，换了之后这台电脑上原来认它的工具可能就不认了。Linux 上要有权限打开设备节点（udev 规则），和用 libusb 的程序一样；macOS、Android 不用管。
 - 电脑自己的程序正占着设备时（比如它自己的 adb server）借不到，要先在那边放开：`adb kill-server`。
-- 浏览器自己留着的类别借不到：HID（键盘、鼠标，还有 CMSIS-DAP v1 这样走 HID 的调试器）、大容量存储（U 盘、读卡器）、音视频、打印机、智能卡。
+- 浏览器自己留着的类别借不到：HID（键盘、鼠标，还有 CMSIS-DAP v1 这样走 HID 的调试器）、大容量存储（U 盘、读卡器）、音视频、打印机、智能卡。U 盘不能借来 `dd` 镜像：浏览器不给，电脑自己的驱动也正占着它；能用的路是开发板的下载协议（上面这些工具），或者在电脑上烧。
+- 联发科的 boot ROM 是个 CDC ACM 串口设备：Linux 上电脑自己的 `cdc_acm` 驱动会先占住它，Windows 上要换成 WinUSB。
 - 不做等时传输。USB 复位传不到真设备，Linux 自己的 USB/IP 也是这样，复位只在客户机这一侧；靠复位进 bootloader 的工具，要设备自己 detach，DFU 设备大多会。
 
 ## 测试
@@ -66,4 +79,5 @@ adb、fastboot、dfu-util ──usbfs──▶ 客户机的内核 ──vhci-hcd
 - 一台假手机，一个小 adbd：验 adb 的签名用的是浏览器保存的那把密钥；shell、4 MB 的读、8 MB 的 push；
 - 重启进 bootloader：手机在客户机里也拔掉了，回来时是另一台设备，一个小 bootloader；fastboot 读变量、下载一个拖进来的 16 MB 文件；再拔掉插回，还是这台，自己借回来；
 - 一台按 DFU 1.1 回答的设备，访客从只有 DFU 设备的列表里选它：dfu-util 下载，再上传回来，一字不差；
+- 其余的工具都能跑，只问版本、帮助、有哪些编程器时，一台设备也不去借；
 - `usb off`，三个口都放开。

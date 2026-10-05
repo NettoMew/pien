@@ -608,8 +608,27 @@ check("dfu-util -U", output.includes(md5(flash)), took);
 output = await run("usb");
 check("two devices lent at once", output.split("\n").filter((line) => /^\s*1-\d+ /.test(line)).length === 2, output.split("\n").slice(0, 2).join(" · "));
 
+step("the rest of the tools, asking for no device when they need none");
+const asked = bus.asked.length;
+const versions = {
+  rkdeveloptool: ["rkdeveloptool -v", /rkdeveloptool ver \d/],
+  "sunxi-fel": ["sunxi-fel", /sunxi-fel v1\.4/],
+  picotool: ["picotool version", /picotool v2\.3\.1/],
+  openocd: ["openocd --version", /Open On-Chip Debugger 0\.12/],
+  flashrom: ["flashrom --version", /flashrom v1\.6/],
+  avrdude: ["avrdude -c '?'", /Valid programmers are/],
+  mtk: ["mtk --help", /usage: mtk/],
+  edl: ["edl --help", /Usage:/],
+} as const;
+for (const [tool, [command, expected]] of Object.entries(versions)) {
+  output = await run(`${command} 2>&1 | head -40`);
+  check(tool, expected.test(output), output.split("\n").find((line) => expected.test(line))?.trim() ?? output.split("\n")[0]);
+}
+check("none of them asked for a device", bus.asked.length === asked, `${bus.asked.length - asked} asked`);
+
 step("letting go");
-output = await run("usb off; cat /run/usb/1 /run/usb/2 /run/usb/3; lsusb | count");
+// The kernel lets the devices go a moment after, as from cables pulled.
+output = await run("usb off; cat /run/usb/1 /run/usb/2 /run/usb/3; sleep 1; lsusb | count");
 check("usb off", output.includes("down off") && output.endsWith("2"), output.split("\n").join(" · "));
 
 await machine.destroy();

@@ -20,7 +20,7 @@ guest@zutto-issho ~> tio -b 1500000 /dev/ttyUSB0
 | `esptool`、`espefuse`、`espsecure` | 乐鑫的芯片，ESP8266 和各型号 ESP32 |
 | `mpremote` | MicroPython 板子的 REPL 和文件 |
 | `stm32flash` | STM32，经芯片 ROM 里的串口 bootloader |
-| `avrdude` | AVR：Arduino 的 bootloader（`-c arduino`、`-c urclock`），STK500 这类串口编程器 |
+| `avrdude` | AVR：Arduino 的 bootloader（`-c arduino`、`-c urclock`），STK500 这类串口编程器；USB 的编程器借的是 USB 设备（[docs/usb.md](usb.md)） |
 
 这些工具不用先敲 `serial`，也不用写串口在哪：还没借到串口时它们先借一个，再按各自的方式告诉它。tio 和 stm32flash 加在命令最后，avrdude 加 `-P`，esptool 经 `ESPTOOL_PORT`，mpremote 在前面加 `connect`，lrzsz 把标准输入输出接上去。自己指定了串口，或者这一次用不着串口（`esptool merge-bin`、`mpremote version`），就原样运行。都在 `/etc/fish/conf.d/serial-tools.fish`。
 

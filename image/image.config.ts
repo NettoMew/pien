@@ -11,9 +11,13 @@ export default {
     "busybox", "busybox-binsh", "fish", "fastfetch", "htop", "tree", "curl", "ssl_client", "openssh-client-default", "mtr", "tzdata",
     // The visitor's USB devices, over USB/IP (src/usb/): usbip attaches them,
     // socat carries them through the console, lsusb lists them. What talks
-    // to them: a phone's adb and fastboot, and dfu-util, for firmware.
+    // to them: a phone's adb and fastboot; DFU, Rockchip's and Allwinner's
+    // boot ROMs; debug probes, and SPI flash programmers. Built apart
+    // (image/tools/): picotool, for Raspberry Pi's chips; mtkclient and edl,
+    // for MediaTek's and Qualcomm's boot ROMs, whose libraries come next.
     "usbip-utils", "socat", "usbutils",
-    "android-tools-adb", "android-tools-fastboot", "dfu-util",
+    "android-tools-adb", "android-tools-fastboot", "dfu-util", "rkdeveloptool", "sunxi-tools", "openocd", "flashrom",
+    "py3-usb", "py3-pycryptodomex", "py3-colorama", "py3-capstone", "py3-docopt",
     // A serial port from the visitor's computer (src/serial/), a terminal for
     // it, and what flashes the boards at its other end: STM32s through their
     // ROM bootloader, and AVRs. Built apart (image/tools/): lrzsz, for U-Boot's

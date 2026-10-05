@@ -24,18 +24,27 @@ end
 
 # avrdude: as -P, for its programmers at the end of a serial line (those
 # avrdude.conf gives connection_type = serial, as of avrdude 8.1).
-function avrdude --description "Program an AVR; a serial programmer goes through the port lent to the guest"
+function avrdude --description "Program an AVR, through the serial port or a USB programmer lent to the guest"
     set -l given $argv
-    argparse --ignore-unknown 'c=' 'P=' -- $argv 2>/dev/null
+    argparse --ignore-unknown 'c=' 'p=' 'P=' -- $argv 2>/dev/null
     set -l serial wiring arduino urclock xbee serialupdi serprog avrisp avrispv2 buspirate buspirate_bb \
         stk500 stk500v1 arduino_as_isp mib510 stk500v2 scratchmonkey stk500pp scratchmonkey_pp stk500hvsp \
         scratchmonkey_hvsp avr910 butterfly avr109 avr911 butterfly_mk mkbutterfly jtagmkI jtag1 pavr ponyser \
         dasa dasa3 c2n232i jtag2updi nanoevery
-    if set -q _flag_P; or not contains -- "$_flag_c" $serial
+    # Asked which programmers or parts there are, it needs none.
+    if __needs_no_device $given; or not set -q _flag_c; or string match -qr -- '\?' $_flag_c $_flag_p
         command avrdude $given
+    else if contains -- $_flag_c $serial
+        if set -q _flag_P
+            command avrdude $given
+        else
+            set -l device (__serial_device); or return 1
+            command avrdude -P $device $given
+        end
     else
-        set -l device (__serial_device); or return 1
-        command avrdude -P $device $given
+        # Its other programmers are on USB: lent as any USB tool's device
+        # (usb-tools.fish), of the vendors avrdude.conf names for them.
+        __usb_device 03eb 0403 04d8 1209 1457 16c0 16d0 1781 1a86 2341 2a03; and command avrdude $given
     end
 end
 

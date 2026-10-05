@@ -70,8 +70,12 @@ export interface Manifest {
     bios: string;
     vgaBios: string;
     kernel: string;
-    /** Each program's shared libraries, by blob (scripts/lib/libraries.ts). */
-    libraries: string;
+    /**
+     * What each program reads as it starts, by blob: its shared libraries
+     * (scripts/lib/libraries.ts), and for those traced, the rest
+     * (scripts/build-prefetch.ts).
+     */
+    prefetch: string;
   };
   /** The workbench's toolchain disk (build-workbench), and what is on it. */
   workbench?: {
