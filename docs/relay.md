@@ -139,7 +139,7 @@ RELAY=127.0.0.1:18095 npm run dev
 ## 部署（2026-10-05，.101）
 
 ```
-访客 ──https://test-demo.arc.moe/relay──▶ .100 Caddy（没改）──▶ .101:18090 nginx（homepage-demo）
+访客 ──https://arc.moe/relay──▶ .100 Caddy ──▶ .101:18090 nginx（homepage-demo）
                                                                    │ Docker 网络 homepage
                                                                    ▼
                                                      homepage-relay:8095（不发布端口）──▶ 互联网，出口 154.86.23.202
@@ -147,7 +147,7 @@ RELAY=127.0.0.1:18095 npm run dev
 
 - **中继**：容器 `homepage-relay`，镜像 `homepage-relay:<提交>`，以 65534（nobody）运行，`--restart unless-stopped`，只接在 Docker 网络 `homepage` 上。配置在 `/srv/homepage-relay/relay.toml`（属主 65534，权限 600），只有会话密钥（和 press 的相同）；格式见 `deploy/relay.toml.example`：最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
 - **nginx**：`deploy/nginx.conf` 新增 `location = /relay`，按请求经 Docker 的 DNS 找到中继，所以中继不在时 nginx 也能启动；这一段不写访问日志。容器 `homepage-demo` 多接了 `homepage` 网络。
-- **Caddy（.100）**：没改，它本来就把整个站点连同 WebSocket 转给 .101。
+- **Caddy（.100）**：把整个站点连同 WebSocket 转给 .101，中继不用单独配置。站点在 `arc.moe`；`www.arc.moe` 和原来的 `test-demo.arc.moe` 都 301 到那里（2026-10-05 搬过去）。
 
 **怎么做的**（镜像在 v2in0 上构建，`.101` 不必拉 Rust 构建环境）：
 

@@ -78,7 +78,7 @@ ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
 | `POST /api/auth/github/link` | 已登录时要一个关联用的地址，窗口再去那里 |
 | `GET /api/auth/github/callback` | 从 GitHub 回来：结果经 BroadcastChannel 告诉页面，窗口自己关掉 |
 
-- 通行密钥：rpId 是站点的主机名 `arc.moe`，`test-demo.arc.moe` 这样的子域也能用同一批通行密钥（`PRESS_ORIGINS`）。可发现凭据，登录时不用输用户名。
+- 通行密钥：rpId 是站点的主机名 `arc.moe`，子域上的页面也能用同一批通行密钥，只要在 `PRESS_ORIGINS` 里列出来。可发现凭据，登录时不用输用户名。
 - GitHub：不要任何权限（no scopes），只为知道「是谁」；拿到身份后立刻把 GitHub 的 token 还回去（DELETE）。来回一趟用 HttpOnly cookie 绑在发起它的浏览器上，所以别人点不进你的登录。
 - 账号存在 `PRESS_DATA/account.json`（权限 600），写入先写旁边再改名，不会半截。
 - 配置全在环境变量里，见 `press/src/config.ts` 开头和 `deploy/press.env.example`。
