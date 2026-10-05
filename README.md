@@ -80,14 +80,31 @@ npm run dev            # http://localhost:5173
 
 | | |
 |---|---|
-| 首次访问 | 约 6.2 MB（gzip 后）：快照 5.3 MB，v86 的 wasm 385 KB，JS 294 KB（v86 与 xterm.js 185 KB，React 等界面库 103 KB，页面自己 6 KB），CSS 5 KB |
-| 本地到出现提示符 | 1.4 秒，其中约 1 秒是开机动画；机器自己 0.3 秒就恢复好了（不含网络） |
+| 首次访问 | 约 6.5 MB（gzip 后）：快照 5.7 MB，v86 的 wasm 381 KB，JS 325 KB（v86 与 xterm.js 204 KB，React 等界面库 106 KB，页面自己 15 KB），CSS 5 KB；串口、蓝牙、USB、take、share 的代码用到才加载，各 2 到 4 KB |
+| 本地到出现提示符 | 1.5 秒，其中约 1 秒是开机动画；机器自己 0.3 秒就恢复好了（不含网络） |
 | `cat blog/hello.md` | 只请求这一篇，911 B |
-| 内核 | 1.6 MB；客户机可用内存 58 MB |
-| 整个系统 | 1763 个文件块，92 MB，压缩后 26 MB，全部按需加载 |
+| 内核 | 1.9 MB，四个串口、USB/IP；客户机可用内存 58 MB |
+| 整个系统 | 7782 个文件块，247 MB，压缩后 70 MB，全部按需加载；其中 54 MB 是 mtkclient 给各型联发科芯片的 loader，用到哪个读哪个 |
 | `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
 | 串口 | 假线上 64 KB 在 1500000 波特下往返 1.4 秒；`sb` 往假 U-Boot 传 50 KB 1.5 秒；页面这一侧用到才加载 |
 | 程序第一次运行 | 网络延迟 100 ms 时，`adb version` 9.0 秒 → 2.7 秒（它要 57 个库），`curl --version` 2.7 秒 → 1.7 秒，`esptool version` 52.9 秒 → 15.9 秒（352 个文件）：页面把它们一起取来 |
+
+## 浏览器
+
+页面和机器在哪个现代浏览器里都能跑；接访客的设备要看浏览器给不给。
+
+| | 电脑上的 Chrome、Edge | Android 上的 Chrome | Firefox | Safari（含 iOS 上的所有浏览器） |
+|---|---|---|---|---|
+| 终端、联网、登录、写文章 | 能 | 能 | 能 | 能 |
+| `drop` 拿进文件 | 能，拖进来或选 | 能，选 | 能 | 能 |
+| `take` 存出去 | 能，选地方，边读边写 | 能，下载 | 能，下载 | 能，下载 |
+| `share` 共享文件夹 | 能 | — | — | — |
+| `serial` USB 转串口线 | 能 | — | — | — |
+| `serial` 经典蓝牙串口 | 能 | 能 | — | — |
+| `ble` 蓝牙 LE 串口 | 能 | 能 | — | — |
+| `usb`、adb、fastboot 和各家刷机工具 | 能 | 能 | — | — |
+
+这些接口（Web Serial、Web Bluetooth、WebUSB、File System Access）只有 Chromium 实现了；没有的时候，命令会说明白是浏览器不支持，而不是坏了。Windows 上 USB 设备还要换成 WinUSB 驱动，见 [docs/usb.md](docs/usb.md)。
 
 ## 接下来
 
