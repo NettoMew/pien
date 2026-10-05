@@ -204,8 +204,12 @@ while read -r cmd arg; do
 		set -- $arg
 		case $1 in
 		up)
-			ip link set eth0 mtu "$6" up
+			# Down first: every way out starts afresh, IPv6 too. Coming up,
+			# the kernel asks the gateway for its advertisement, and makes
+			# an address from it if the way out gives one.
+			ip link set eth0 down
 			ip addr flush dev eth0
+			ip link set eth0 mtu "$6" up
 			ip addr add "$3" dev eth0
 			ip route add "$4" dev eth0 2> /dev/null # on-link already, unless /32
 			ip route add default via "$4"

@@ -59,7 +59,7 @@ function net --description 'The network: net on | off | login | relay | passkey 
             __net_relay $argv[2..]
         case ''
             if test "$state[1]" = up
-                echo '  '$hl'Online'$n' through the relay, at '$state[3]
+                echo '  '$hl'Online'$n' through the relay, at '(string join ' and ' $state[3] (__net_ipv6))
             else
                 echo '  Offline.'
             end
@@ -106,7 +106,7 @@ function __net_up --argument-names way address
     set -l dim (set_color brblack)
     set -l hl (set_color cyan)
     set -l n (set_color normal)
-    echo '  '$hl'Online'$n' through the relay, at '$address
+    echo '  '$hl'Online'$n' through the relay, at '(string join ' and ' $address (__net_ipv6 --wait))
     # Ask Cloudflare which way out this took.
     set -l trace (curl -s --max-time 15 https://1.1.1.1/cdn-cgi/trace)
     set -l ip (string replace -rf '^ip=' '' -- $trace)
@@ -114,6 +114,24 @@ function __net_up --argument-names way address
     set -q ip[1]; and echo '  Out via '$ip' · '$colo
     echo $dim'  Try curl wttr.in/?0 · ping 1.1.1.1'$n
     echo $dim'      ssh user@host · mtr 1.1.1.1'$n
+end
+
+# The IPv6 address the guest made from the relay's advertisement, if it made
+# one. With --wait, the advertisement has a second to come: it follows a
+# moment after eth0 comes up.
+function __net_ipv6
+    argparse wait -- $argv; or return
+    set -l tries 1
+    set -q _flag_wait; and set tries 10
+    for i in (seq $tries)
+        set -l address (ip -6 addr show dev eth0 scope global 2>/dev/null | string match -rg 'inet6 ([0-9a-f:]+)/')
+        if set -q address[1]
+            echo $address[1]
+            return
+        end
+        test $i -lt $tries; and sleep 0.1
+    end
+    return 1
 end
 
 function __net_why

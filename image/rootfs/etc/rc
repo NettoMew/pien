@@ -95,4 +95,8 @@ ip link set lo up
 mkdir -p /run/net
 echo off > /run/net/state
 chmod 666 /run/net/state
-echo '0 2147483647' > /proc/sys/net/ipv4/ping_group_range # ping without root
+echo '0 2147483647' > /proc/sys/net/ipv4/ping_group_range # ping without root, either family
+# On eth0 are the guest and the relay's gateway alone: no address can be
+# another's, so IPv6 takes its addresses at once, without the second of
+# duplicate detection, and asks the gateway for its advertisement at once.
+echo 0 > /proc/sys/net/ipv6/conf/eth0/accept_dad

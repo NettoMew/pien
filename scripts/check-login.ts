@@ -2,8 +2,9 @@
 // with fresh keys and an empty account, and Chrome's virtual authenticator
 // holding the passkeys. In the guest: the first passkey, with a code from
 // `press enroll`; out and back in; the list; online through this site's relay
-// with the login; through a relay of one's own with its key, and turned away
-// with a wrong one; and a question the guest's commands did not ask, ignored.
+// with the login, IPv6 too; through a relay of one's own with its key, and
+// turned away with a wrong one; and a question the guest's commands did not
+// ask, ignored.
 //
 //   npm run build && npm run check:login
 //
@@ -13,7 +14,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { Checks } from "./lib/guest.ts";
 import { step } from "./lib/log.ts";
-import { GITHUB_USER, RELAY, SITE, site } from "./lib/site.ts";
+import { GITHUB_USER, PRESS6, RELAY, SITE, site } from "./lib/site.ts";
 
 const checks = new Checks();
 const check = checks.check.bind(checks);
@@ -45,6 +46,14 @@ check("is ignored: still logged in", said.includes("Logged in until"));
 step("online through this site's relay, with the login");
 said = await run("net on", ["Try curl", "Offline"], 60e3);
 check("online", said.includes("Online through the relay"), said.slice(-120));
+
+step("IPv6 through the relay, from its advertisement");
+check("an address in the relay's network", said.includes(" and fdca:c697:4c23:"), said.slice(-160));
+said = await run("ping -6 -c 1 -W 5 fdca:c697:4c23::2", ["packet loss", "ping:"]);
+check("the gateway answers", said.includes("1 packets received"), said.slice(-120));
+const status = [..."012345"].map((digit) => `HTTP ${digit}`); // not "HTTP ": the command says that
+said = await run(`curl -g -s -o /dev/null -w 'HTTP %{http_code}\\n' http://${PRESS6}/`, status, 30e3);
+check("a connection through the relay", /HTTP [1-5]\d\d/.test(said), said.slice(-80));
 said = await run("net off", ["Off."]);
 
 step("a relay of one's own");

@@ -20,6 +20,9 @@ const ROOT = join(import.meta.dirname, "../..");
 const PORTS = { site: 4174, press: 18096, relay: 18095 };
 export const SITE = `http://localhost:${PORTS.site}`;
 export const RELAY = `ws://127.0.0.1:${PORTS.relay}/`;
+/** press, as the guest reaches it over IPv6: an alias the relay keeps, for 127.0.0.1. */
+const PRESS_ALIAS = "2001:db8::10";
+export const PRESS6 = `[${PRESS_ALIAS}]:${PORTS.press}`;
 /** Who the stand-in GitHub says is signed in. */
 export const GITHUB_USER = "owner-on-github";
 
@@ -173,7 +176,14 @@ export async function site({ relay = false, github = false, writing = false } = 
 
   if (relay) {
     execFileSync("cargo", ["build", "--release", "--quiet", "--manifest-path", "relay/Cargo.toml"], { cwd: ROOT, stdio: "inherit" });
-    await writeFile(join(data, "relay.toml"), `listen = "127.0.0.1:${PORTS.relay}"\nkey = "${ownKey}"\nsession_key = "${sessionKey}"\n`);
+    const config = [
+      `listen = "127.0.0.1:${PORTS.relay}"`,
+      `key = "${ownKey}"`,
+      `session_key = "${sessionKey}"`,
+      "[policy]",
+      `aliases = { "${PRESS_ALIAS}" = "127.0.0.1" }`,
+    ];
+    await writeFile(join(data, "relay.toml"), config.join("\n") + "\n");
     await start("the relay", join(ROOT, "relay/target/release/relay"), [join(data, "relay.toml")], /listening/);
   }
   await start("press", process.execPath, ["press/src/main.ts"], /listening/, pressEnv);
