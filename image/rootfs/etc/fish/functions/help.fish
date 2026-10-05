@@ -7,7 +7,8 @@ function help --description 'What this machine can do'
         'fastfetch  htop' 'look at this machine' \
         'net on' 'go online: curl, ping, ssh, mtr' \
         drop 'bring in files from your computer' \
-        'adb  fastboot' 'a phone over USB, as on any desk'
+        'adb  fastboot' 'a phone over USB, as on any desk' \
+        'serial  tio' 'a serial port from your computer'
     if __on_workbench
         set -a rows \
             nvim 'the editor, set up for every language here' \

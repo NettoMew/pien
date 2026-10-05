@@ -11,6 +11,7 @@ import { Machine } from "./machine.ts";
 import { known, net, unwire as unwireNet } from "./net/index.ts";
 import { useMachine } from "./store.ts";
 import { opened, openLink, term } from "./terminal.ts";
+import { serial, unwire as unwireSerial } from "./serial/index.ts";
 import { usb, unwire as unwireUsb } from "./usb/index.ts";
 
 const vm = (file: string) => `${import.meta.env.BASE_URL}vm/${file}`;
@@ -28,14 +29,15 @@ term.onData((data) => live && machine?.write(data));
 term.onBinary((data) => live && machine?.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
 term.onResize(({ cols, rows }) => live && machine?.resize(cols, rows));
 
-// The guest's `open`, `net`, `drop`, `workbench`/`home`, and on the workbench
-// `adb`, `fastboot` and `usb`, print a private escape sequence; see open.fish,
-// net.fish, drop.fish, workbench.fish and the workbench's __usb.fish.
+// The guest's `open`, `net`, `drop`, `workbench`/`home`, `adb`, `fastboot`,
+// `usb` and `serial` print a private escape sequence; see open.fish, net.fish,
+// drop.fish, workbench.fish, __usb.fish and serial.fish.
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
   if (verb === "net" && machine) void net(rest[0] ?? "", rest.slice(1).join(";"), machine);
   if (verb === "usb" && machine) void usb(rest[0] ?? "", machine);
+  if (verb === "serial" && machine) void serial(rest[0] ?? "", machine);
   if (verb === "drop" && machine) pick(machine);
   if (verb === "machine" && (rest[0] === "home" || rest[0] === "workbench") && rest[0] !== useMachine.getState().machine) {
     useMachine.setState({ next: rest[0] });
@@ -87,6 +89,7 @@ export async function stop() {
   live = false;
   unwireNet();
   await unwireUsb();
+  await unwireSerial();
   term.reset();
   await stopping?.destroy();
 }

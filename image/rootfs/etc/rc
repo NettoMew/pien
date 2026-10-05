@@ -35,6 +35,17 @@ for port in /sys/class/virtio-ports/*; do
 	ln -sf "../${port##*/}" "/dev/virtio-ports/$(cat "$port/name")"
 done
 
+# A serial port lent from the visitor's computer (src/serial/, hostd): the
+# third UART. The page reads the speed off the divisor its driver sets, so the
+# clock it divides is high, 24 MHz over 16: 1500000, 2000000 and 3000000
+# baud come out exact, and the page rounds the near misses (115200 and the
+# like, a fraction of a percent off) to the standard speeds they stand for.
+setserial /dev/ttyS2 baud_base 24000000
+chown guest /dev/ttyS2
+mkdir -p /run/serial
+echo off > /run/serial/state
+chmod 666 /run/serial/state
+
 # Files the visitor drops on the page, or picks for `drop` (see hostd).
 mkdir -p /run/drop
 echo none > /run/drop/state

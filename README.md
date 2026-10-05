@@ -16,6 +16,7 @@ npm run dev            # http://localhost:5173
 | `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件，加 `--machine workbench` 连进工作台 |
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
+| `npm run check:serial [-- workbench]` | 给 home（或工作台）插一根假的 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍（见 [docs/serial.md](docs/serial.md)） |
 | `npm run check:usb [-- workbench]` | 给 home（或工作台）插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
@@ -44,6 +45,8 @@ npm run dev            # http://localhost:5173
 
 **工作台**（`image/workbench/`，[docs/workbench.md](docs/workbench.md)）。客户机里敲 `workbench`，屏幕关掉，换一台 768 MB 的机器开起来，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim（LazyVim，每种语言的 LSP、格式化、调试）。`home` 换回来。两台机器上都有真正的 adb 和 fastboot，经 WebUSB 连访客电脑上的手机（同一篇文档）。
 
+**串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，用 tio 连。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。
+
 **排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点。输出到管道时仍然是原文。
 
 **网页版**（`scripts/lib/blog.ts`）。每篇文章同时生成一个纯静态页面 `/blog/<文章>/`，再加上 `/blog/` 列表和 `/feed.xml`，给搜索引擎、分享链接和 `open` 用。页面没有 JavaScript：顶上是 fish 会打出的那行提示符，正文用 Tailwind Typography 排版，配色和终端相同，和 `cat` 在终端里排的一样。它们的样式表 `src/blog.css` 是单独的构建入口，只收这些页面用到的类。首页的 `<noscript>` 里也列着文章。
@@ -69,11 +72,12 @@ npm run dev            # http://localhost:5173
 | 整个系统 | 1763 个文件块，92 MB，压缩后 26 MB，全部按需加载 |
 | `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
 | `net warp` | 第一次 4 秒连上（含注册），之后 1.7 秒；客户机里下载 1.7 MB/s；WARP 客户端 brotli 后 111 KB，用到才加载 |
-| 工作台 | 快照 7.7 MB；工具链盘 739 MB，按需读取；`gcc hello.c` 6 秒，`rustc` 12 秒，`go run` 第一次 13 秒、之后 2 秒，`nvim` 载入全部插件 3 秒 |
+| 串口 | 假线上 64 KB 在 1500000 波特下往返 1.2 秒；页面这一侧用到才加载 |
+| 工作台 | 快照 7.6 MB；工具链盘 739 MB，按需读取；`gcc hello.c` 6 秒，`rustc` 12 秒，`go run` 第一次 13 秒、之后 2 秒，`nvim` 载入全部插件 3 秒 |
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)（`net on`）和 [docs/warp.md](docs/warp.md)（`net warp`）；工作台见 [docs/workbench.md](docs/workbench.md)。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)（`net on`）和 [docs/warp.md](docs/warp.md)（`net warp`）；工作台见 [docs/workbench.md](docs/workbench.md)，串口见 [docs/serial.md](docs/serial.md)。
 
 ## 踩过的坑
 
@@ -104,3 +108,5 @@ npm run dev            # http://localhost:5173
 - **Go 说 `fmt is not in std`**：Go 给每个包目录的索引算哈希时，把文件的修改时间按本地时区格式化进去；客户机用的是访客的时区，构建时存下的索引永远对不上，Go 就要重建索引写回缓存，而缓存属于 root，写失败被当成“包不存在”。缓存改为属于访客。
 - **9p 的 `cache=loose` 看不到页面新加的文件**：客户机记得目录里有什么。拖进来的文件先放进一个它从没见过的目录，再由 hostd 改名搬进 `~/drop`。
 - **fish 第一次启动会跑 Python**：fish 4 把从手册页生成补全的脚本编进了自己的二进制，第一次交互启动时只要有 python3 就在后台跑它，排除 `/usr/share/fish/tools` 也拦不住。镜像里没有手册页，这一趟白跑，还把 5 MB 的 libpython 留在快照里（home 的快照因此从 5.4 MB 涨到 6.8 MB）。`/etc/rc` 先建好它要填的目录 `~/.cache/fish/generated_completions`，它就不跑了。
+- **Web Serial 只在打开时收速度**：改速度、帧格式都得把串口关了再按新设置打开。客户机的 8250 驱动每次改完设置，最后一步都是在关上分频锁存的情况下写一次线路控制寄存器；页面在 v86 的这个寄存器字段上装了一个访问器，正好在这一刻知道该重开了，用不着轮询。
+- **16550 的速度只到 115200**：默认时钟除以 16 再除以分频，分频最小是 1。`/etc/rc` 用 `setserial` 把 ttyS2 的时钟调高到 24 MHz（除以 16 之后），1500000、3000000 都成了整数分频；差一点点的（115200 这类）由页面对回标准速度。

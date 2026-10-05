@@ -13,6 +13,8 @@ declare module "v86" {
     "virtio-console1-output-bytes": Uint8Array;
     "virtio-console2-output-bytes": Uint8Array;
     "virtio-console3-output-bytes": Uint8Array;
+    "serial2-data-terminal-ready-output": boolean;
+    "serial2-request-to-send-output": boolean;
   }
 }
 
@@ -151,11 +153,120 @@ export class Port {
   }
 }
 
+/** v86's 16550, as far as the visitor's serial port reaches into it. */
+interface Uart {
+  /** The divisor latch: DLL, and DLM above it. */
+  baud_rate: number;
+  line_control: number;
+  modem_control: number;
+}
+
+/** Line control: the divisor latch is open while the driver sets the speed. */
+const DIVISOR_LATCH = 0x80;
+
+/** The far end's modem lines, as the guest reads them. */
+export interface ModemStatus {
+  cts: boolean;
+  dsr: boolean;
+  dcd: boolean;
+  ri: boolean;
+}
+
+/**
+ * The guest's ttyS2, a 16550 UART v86 emulates, seen from outside: the bytes
+ * it sends and is sent, the settings its driver gives it (the speed as a
+ * divisor, the framing and break in the line control register), DTR and RTS
+ * as the driver drives them, and the modem lines it reads.
+ */
+export class SerialLine {
+  private readonly machine: Machine;
+  private readonly settled = new Set<(divisor: number, lineControl: number) => void>();
+  private watching = false;
+
+  constructor(machine: Machine) {
+    this.machine = machine;
+  }
+
+  private get uart(): Uart | undefined {
+    return this.machine.devices()?.uart2;
+  }
+
+  /** The divisor and the line control register as the driver last left them. */
+  get divisor(): number {
+    return this.uart?.baud_rate ?? 0;
+  }
+  get lineControl(): number {
+    return this.uart?.line_control ?? 0;
+  }
+  get dtr(): boolean {
+    return !!((this.uart?.modem_control ?? 0) & 1);
+  }
+  get rts(): boolean {
+    return !!((this.uart?.modem_control ?? 0) & 2);
+  }
+
+  /**
+   * Calls `listener` whenever the driver has set the line up: each time it
+   * writes the line control register with the divisor latch closed, which it
+   * does last when changing the speed or framing, and to start or end a break.
+   */
+  onSettings(listener: (divisor: number, lineControl: number) => void): () => void {
+    const uart = this.uart;
+    if (uart && !this.watching) {
+      // v86 keeps the register in a plain field; one that tells when it is written.
+      let value = uart.line_control;
+      Object.defineProperty(uart, "line_control", {
+        configurable: true,
+        enumerable: true,
+        get: () => value,
+        set: (next: number) => {
+          value = next;
+          if (next & DIVISOR_LATCH) return;
+          for (const settled of this.settled) settled(uart.baud_rate, next);
+        },
+      });
+      this.watching = true;
+    }
+    this.settled.add(listener);
+    return () => this.settled.delete(listener);
+  }
+
+  /** Bytes the guest sends, one at a time, as the UART does. */
+  onData(listener: (byte: number) => void): () => void {
+    this.machine.emulator.add_listener("serial2-output-byte", listener);
+    return () => this.machine.emulator.remove_listener("serial2-output-byte", listener);
+  }
+
+  onDtr(listener: (on: boolean) => void): () => void {
+    this.machine.emulator.add_listener("serial2-data-terminal-ready-output", listener);
+    return () => this.machine.emulator.remove_listener("serial2-data-terminal-ready-output", listener);
+  }
+
+  onRts(listener: (on: boolean) => void): () => void {
+    this.machine.emulator.add_listener("serial2-request-to-send-output", listener);
+    return () => this.machine.emulator.remove_listener("serial2-request-to-send-output", listener);
+  }
+
+  /** Bytes for the guest; the UART holds as many as it is sent. */
+  write(bytes: Uint8Array): void {
+    this.machine.emulator.serial_send_bytes(2, bytes);
+  }
+
+  /** The far end's modem lines changed. */
+  status({ cts, dsr, dcd, ri }: ModemStatus): void {
+    this.machine.bus.send("serial2-clear-to-send-input", cts);
+    this.machine.bus.send("serial2-data-set-ready-input", dsr);
+    this.machine.bus.send("serial2-carrier-detect-input", dcd);
+    this.machine.bus.send("serial2-ring-indicator-input", ri);
+  }
+}
+
 export class Machine {
   readonly emulator: V86;
   readonly bus: Bus;
   private readonly encoder = new TextEncoder();
   private readonly ports = new Map<PortNumber, Port>();
+  private line?: SerialLine;
   private pending = "";
 
   constructor(options: V86Options) {
@@ -174,16 +285,25 @@ export class Machine {
     });
   }
 
+  /** v86's devices, once the machine is up. */
+  devices(): { virtio_console?: Console; uart2?: Uart } | undefined {
+    return (this.emulator as unknown as { v86?: { cpu: { devices: { virtio_console?: Console; uart2?: Uart } } } }).v86?.cpu.devices;
+  }
+
   /** The virtio console, once the machine is up. */
   console(): Console | undefined {
-    const internals = this.emulator as unknown as { v86?: { cpu: { devices: { virtio_console?: Console } } } };
-    return internals.v86?.cpu.devices.virtio_console;
+    return this.devices()?.virtio_console;
   }
 
   port(number: PortNumber): Port {
     let port = this.ports.get(number);
     if (!port) this.ports.set(number, (port = new Port(this, number)));
     return port;
+  }
+
+  /** The serial port the visitor lends: the guest's ttyS2. */
+  serial(): SerialLine {
+    return (this.line ??= new SerialLine(this));
   }
 
   /** Resolves once the machine is running (booting, or resumed from a snapshot). */

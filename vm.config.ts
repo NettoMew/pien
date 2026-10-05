@@ -91,6 +91,7 @@ export function v86Options(at: (file: string) => string, manifest: Manifest, nam
     vga_bios: { url: at(files.vgaBios) },
     virtio_console: { type: "none" }, // hvc0: the visitor's terminal, with real window-size events; we render it
     uart1: true, // ttyS1: a quiet control line between page and guest
+    uart2: true, // ttyS2: a serial port from the visitor's computer (src/serial/)
     // eth0, wired to nothing until `net on` or `net warp` (src/net/); hostd
     // sets its address and MTU then. On restore v86 would pick a new MAC
     // behind the guest's back; keep the one the snapshot has.

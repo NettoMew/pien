@@ -18,6 +18,10 @@
 #                    bridge it to where the tool is pointed
 #   usb down <tool> <why>
 #                    it went away, or was let go: take the bridge down
+#   serial up <name> a serial port from the visitor's computer is attached
+#                    (src/serial/): /dev/ttyUSB0 leads to it
+#   serial down <why>
+#                    it went away, or was let go
 #   drop <n>         files from the visitor's computer wait in /.drop/<n>
 #                    (src/drop.ts): move them into ~/drop
 #   drop none        … or the visitor chose none
@@ -150,6 +154,21 @@ while read -r cmd arg; do
 			unbridge "$tool"
 			shift 2
 			echo "down $*" > "/run/usb/$tool"
+			;;
+		esac
+		;;
+	serial)
+		set -- $arg
+		case $1 in
+		up)
+			shift
+			ln -sf ttyS2 /dev/ttyUSB0
+			echo "up $*" > /run/serial/state
+			;;
+		down)
+			shift
+			rm -f /dev/ttyUSB0
+			echo "down $*" > /run/serial/state
 			;;
 		esac
 		;;

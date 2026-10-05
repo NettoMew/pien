@@ -12,6 +12,8 @@ export default {
     // A phone on the visitor's USB (src/usb/), on either machine. Alpine's adb
     // and fastboot bring python3 along.
     "android-tools-adb", "android-tools-fastboot", "socat",
+    // A serial port from the visitor's computer (src/serial/), and a terminal for it.
+    "tio",
   ],
 
   // fish wants the full terminfo database; the common entries are plenty.
