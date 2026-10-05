@@ -1,10 +1,12 @@
 //! One guest's private network behind one WebSocket — QEMU's "user"
-//! networking, in effect:
+//! networking, in effect, with IPv6 beside it:
 //!
 //! ```text
-//! 10.0.2.15   the guest
-//! 10.0.2.2    the gateway: answers ARP and ping, and is every route out
-//! 10.0.2.3    the DNS server (dns.rs)
+//! 10.0.2.15            the guest
+//! 10.0.2.2             the gateway: answers ARP and ping, and is every route out
+//! 10.0.2.3             the DNS server (dns.rs)
+//! fdca:c697:4c23::/64  the guest's IPv6 network: it makes its own address in it
+//! fdca:c697:4c23::2    the gateway again, which advertises itself from fe80::2
 //! ```
 //!
 //! smoltcp plays the gateway's end of every TCP connection. Each is dialled
@@ -15,7 +17,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::ErrorKind;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant as Clock};
 
@@ -25,31 +27,49 @@ use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::tcp;
 use smoltcp::time::Instant;
 use smoltcp::wire::{
-    EthernetAddress, EthernetFrame, EthernetProtocol, HardwareAddress, Icmpv4DstUnreachable, Icmpv4Message,
-    Icmpv4Packet, IpAddress, IpCidr, IpListenEndpoint, IpProtocol, Ipv4Packet, TcpPacket, UdpPacket,
+    EthernetAddress, EthernetFrame, EthernetProtocol, HardwareAddress, Icmpv6Message, IpAddress, IpCidr,
+    IpListenEndpoint, IpProtocol, TcpPacket, UdpPacket,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UdpSocket;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::Shared;
 use crate::egress::{self, Failure};
-use crate::{packet, reports};
+use crate::packet::{self, Why};
+use crate::reports::{self, Report};
 
 pub const GUEST: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 15);
 pub const GATEWAY: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 2);
 pub const DNS: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 3);
+/// The guest's IPv6 network, a /64 of unique local addresses (RFC 4193)
+/// whose global ID was drawn at random once: the same in every session, as
+/// 10.0.2.0/24 is. The guest makes its address in it (SLAAC).
+pub const PREFIX: Ipv6Addr = Ipv6Addr::new(0xfdca, 0xc697, 0x4c23, 0, 0, 0, 0, 0);
+pub const GATEWAY6: Ipv6Addr = Ipv6Addr::new(0xfdca, 0xc697, 0x4c23, 0, 0, 0, 0, 2);
+/// The gateway on the link itself: routers advertise from link-local addresses.
+pub const GATEWAY_LINK: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2);
 /// QEMU's gateway address, the one guests have met for decades.
 pub const GATEWAY_MAC: EthernetAddress = EthernetAddress([0x52, 0x55, 0x0a, 0x00, 0x02, 0x02]);
+/// Where frames for every IPv6 node on the link go: ff02::1's.
+const ALL_NODES_MAC: EthernetAddress = EthernetAddress([0x33, 0x33, 0, 0, 0, 1]);
 
+/// How long one advertisement keeps the gateway the guest's way out, and
+/// how often it advertises again: RFC 4861's defaults.
+const ROUTER_LIFETIME: Duration = Duration::from_secs(1800);
+const ADVERTISE_EVERY: Duration = Duration::from_secs(600);
+
+const ETHERNET: usize = EthernetFrame::<&[u8]>::header_len();
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const SOCKET_BUFFER: usize = 256 << 10;
 const CHUNK: usize = 16 << 10;
 const DATAGRAM_IDLE: Duration = Duration::from_secs(60);
 
-/// A TCP connection, or a UDP / ICMP conversation: the guest's port (or
-/// echo identifier), and the destination as the guest sees it.
-type Key = (u16, SocketAddrV4);
+/// A TCP connection, or a UDP / ICMP conversation: the guest's end (its
+/// address, with its port or echo identifier), and the far end as the guest
+/// sees it.
+type Key = (SocketAddr, SocketAddr);
 
 /// How a session ended, and what went through it — counts only.
 #[derive(Debug)]
@@ -76,26 +96,22 @@ enum Event {
     Eof(Key),
     Broken(Key),
     Wrote,
-    Datagram {
-        from: SocketAddrV4,
-        to_port: u16,
-        data: Vec<u8>,
-    },
+    /// From the far end of a UDP conversation, or from the DNS server.
+    Datagram(Key, Vec<u8>),
     /// Nothing listens on that UDP port out there (where there are no reports).
     PortClosed(Key),
     /// An ICMP error from the network about something the guest sent (reports.rs).
-    Report {
-        from: Ipv4Addr,
-        kind: u8,
-        code: u8,
-        quote: Vec<u8>,
-    },
-    Echo {
-        from: Ipv4Addr,
-        ident: u16,
-        seq_no: u16,
-        data: Vec<u8>,
-    },
+    Report { from: IpAddr, why: Why, quote: Vec<u8> },
+    Echo { key: Key, seq_no: u16, data: Vec<u8> },
+}
+
+impl Event {
+    /// What the network said about a datagram of the guest's, which `quote`
+    /// stands for.
+    fn report(report: &Report, quote: &[u8]) -> Self {
+        let why = Why::Reported { kind: report.kind, code: report.code, rest: report.rest };
+        Event::Report { from: report.from, why, quote: quote.to_vec() }
+    }
 }
 
 struct Flow {
@@ -186,6 +202,8 @@ struct Session {
     events_rx: mpsc::Receiver<Event>,
     /// Frames made outside smoltcp, for the guest.
     outbox: Vec<Vec<u8>>,
+    /// When the gateway next tells the link it is there, unasked.
+    next_advert: Clock,
     up: u64,
     down: u64,
     connections: u64,
@@ -202,6 +220,8 @@ impl Session {
         iface.update_ip_addrs(|addrs| {
             addrs.push(IpCidr::new(IpAddress::Ipv4(GATEWAY), 24)).unwrap();
             addrs.push(IpCidr::new(IpAddress::Ipv4(DNS), 24)).unwrap();
+            addrs.push(IpCidr::new(IpAddress::Ipv6(GATEWAY6), 64)).unwrap();
+            addrs.push(IpCidr::new(IpAddress::Ipv6(GATEWAY_LINK), 64)).unwrap();
         });
         // Accept packets for any address, as a router does: all routes lead here.
         iface.set_any_ip(true);
@@ -220,6 +240,7 @@ impl Session {
             events_tx,
             events_rx,
             outbox: Vec::new(),
+            next_advert: Clock::now(),
             up: 0,
             down: 0,
             connections: 0,
@@ -231,8 +252,12 @@ impl Session {
     }
 
     /// Lets smoltcp process what came in, moves bytes between its sockets and
-    /// the far ends, and collects every frame for the guest.
+    /// the far ends, and collects every frame for the guest — with an
+    /// advertisement of the gateway, when one is due.
     fn step(&mut self) {
+        if Clock::now() >= self.next_advert {
+            self.advertise();
+        }
         let now = self.now();
         self.iface.poll(now, &mut self.wire, &mut self.sockets);
         self.service();
@@ -252,68 +277,71 @@ impl Session {
         }
         match ethernet.ethertype() {
             EthernetProtocol::Arp => self.wire.rx.push_back(frame),
-            EthernetProtocol::Ipv4 => self.guest_ip(frame),
+            EthernetProtocol::Ipv4 | EthernetProtocol::Ipv6 => self.guest_ip(frame),
             _ => {}
         }
     }
 
     fn guest_ip(&mut self, frame: Vec<u8>) {
-        let Ok(ip) = Ipv4Packet::new_checked(&frame[EthernetFrame::<&[u8]>::header_len()..]) else {
+        let raw = &frame[ETHERNET..];
+        let Some(ip) = packet::Ip::parse(raw) else {
             return;
         };
-        if ip.src_addr() != GUEST || !ip.verify_checksum() {
+        match ip.icmpv6() {
+            Some(Icmpv6Message::RouterSolicit) => return self.advertise(),
+            // smoltcp keeps the gateway's neighbours, and answers as one.
+            Some(Icmpv6Message::NeighborSolicit | Icmpv6Message::NeighborAdvert) => {
+                return self.wire.rx.push_back(frame);
+            }
+            _ => {}
+        }
+        let to_gateway = is_gateway(ip.dst);
+        if !from_guest(ip.src, to_gateway) {
             return;
         }
-        let (dst, protocol, payload) = (ip.dst_addr(), ip.next_header(), ip.payload());
-
-        if dst == DNS
-            && protocol == IpProtocol::Udp
-            && let Ok(udp) = UdpPacket::new_checked(payload)
+        if ip.dst == IpAddr::V4(DNS)
+            && ip.protocol == IpProtocol::Udp
+            && let Ok(udp) = UdpPacket::new_checked(ip.payload)
             && udp.dst_port() == 53
         {
-            return self.dns(udp.src_port(), udp.payload().to_vec());
+            return self.dns(SocketAddr::new(ip.src, udp.src_port()), udp.payload().to_vec());
         }
-        if dst == GATEWAY || dst == DNS {
+        if to_gateway {
             return self.wire.rx.push_back(frame); // smoltcp: ping, and resets for the rest
         }
-        if dst.is_broadcast() || dst.is_multicast() {
+        if ip.dst.is_multicast() || ip.dst == IpAddr::V4(Ipv4Addr::BROADCAST) {
             return;
         }
         // A router: what arrives on its last hop goes no further. This is
         // traceroute's (and mtr's) first answer.
-        let (ttl, quote) = (ip.hop_limit(), packet::quote(&frame[EthernetFrame::<&[u8]>::header_len()..]));
-        let Some(quote) = quote else { return };
-        if ttl <= 1 {
-            return self.tell_guest(packet::icmp_error(GATEWAY, packet::TIME_EXCEEDED, 0, &quote));
+        if ip.hop_limit <= 1 {
+            return self.refuse(raw, Why::TimeExceeded);
         }
-        let probe = |seq_no, data: &[u8]| Probe { seq_no, data: data.to_vec(), ttl, quote: quote.clone() };
-        let parsed = match protocol {
-            IpProtocol::Tcp => TcpPacket::new_checked(payload).ok().map(|tcp| {
+        let ends = |from, to| (SocketAddr::new(ip.src, from), SocketAddr::new(ip.dst, to));
+        let probe = |seq_no, data: &[u8]| Probe {
+            seq_no,
+            data: data.to_vec(),
+            hop_limit: ip.hop_limit,
+            quote: packet::quote(raw).to_vec(),
+        };
+        let parsed = match ip.protocol {
+            IpProtocol::Tcp => TcpPacket::new_checked(ip.payload).ok().map(|tcp| {
                 let syn = tcp.syn() && !tcp.ack();
-                Packet::Tcp((tcp.src_port(), SocketAddrV4::new(dst, tcp.dst_port())), syn)
+                Packet::Tcp(ends(tcp.src_port(), tcp.dst_port()), syn)
             }),
-            IpProtocol::Udp => UdpPacket::new_checked(payload).ok().map(|udp| {
-                Packet::Udp(
-                    (udp.src_port(), SocketAddrV4::new(dst, udp.dst_port())),
-                    probe(0, udp.payload()),
-                )
-            }),
-            IpProtocol::Icmp => Icmpv4Packet::new_checked(payload)
+            IpProtocol::Udp => UdpPacket::new_checked(ip.payload)
                 .ok()
-                .filter(|icmp| icmp.msg_type() == Icmpv4Message::EchoRequest)
-                .map(|icmp| {
-                    Packet::Echo(
-                        (icmp.echo_ident(), SocketAddrV4::new(dst, 0)),
-                        probe(icmp.echo_seq_no(), icmp.data()),
-                    )
-                }),
+                .map(|udp| Packet::Udp(ends(udp.src_port(), udp.dst_port()), probe(0, udp.payload()))),
+            IpProtocol::Icmp | IpProtocol::Icmpv6 => ip
+                .echo_request()
+                .map(|(ident, seq_no, data)| Packet::Echo(ends(ident, 0), probe(seq_no, data))),
             _ => Some(Packet::Other),
         };
         match parsed {
             Some(Packet::Tcp(key, syn)) => self.tcp(key, syn, frame),
-            Some(Packet::Udp(key, probe)) => self.udp(key, probe, &frame),
+            Some(Packet::Udp(key, probe)) => self.udp(key, probe, &frame[ETHERNET..]),
             Some(Packet::Echo(key, probe)) => self.echo(key, probe),
-            Some(Packet::Other) => self.refuse(&frame, Icmpv4DstUnreachable::ProtoUnreachable),
+            Some(Packet::Other) => self.refuse(&frame[ETHERNET..], Why::Protocol),
             None => {}
         }
     }
@@ -333,7 +361,7 @@ impl Session {
             .then(|| config.policy.route(key.1))
             .flatten();
         let Some(target) = target else {
-            return self.refuse(&syn, Icmpv4DstUnreachable::HostProhibited);
+            return self.refuse(&syn[ETHERNET..], Why::Prohibited);
         };
         let (to_remote, from_guest) = mpsc::channel(4);
         let credit = Arc::new(Semaphore::new(1));
@@ -362,9 +390,9 @@ impl Session {
         self.connections += 1;
     }
 
-    fn udp(&mut self, key: Key, probe: Probe, frame: &[u8]) {
+    fn udp(&mut self, key: Key, probe: Probe, packet: &[u8]) {
         if !self.shared.config.egress.udp {
-            return self.refuse(frame, Icmpv4DstUnreachable::HostProhibited);
+            return self.refuse(packet, Why::Prohibited);
         }
         let probe = match self.datagrams.get(&key) {
             Some(tx) => match tx.try_send(probe) {
@@ -374,7 +402,7 @@ impl Session {
             None => probe,
         };
         let Some(target) = self.shared.config.policy.route(key.1) else {
-            return self.refuse(frame, Icmpv4DstUnreachable::HostProhibited);
+            return self.refuse(packet, Why::Prohibited);
         };
         let (tx, rx) = mpsc::channel(64);
         let _ = tx.try_send(probe);
@@ -390,7 +418,7 @@ impl Session {
             },
             None => probe,
         };
-        let Some(target) = self.shared.config.policy.address(*key.1.ip()) else {
+        let Some(target) = self.shared.config.policy.address(key.1.ip()) else {
             return;
         };
         let (tx, rx) = mpsc::channel(64);
@@ -399,26 +427,31 @@ impl Session {
         self.pings.insert(key, tx);
     }
 
-    fn dns(&mut self, port: u16, query: Vec<u8>) {
+    fn dns(&mut self, guest: SocketAddr, query: Vec<u8>) {
         let (shared, events) = (self.shared.clone(), self.events_tx.clone());
         tokio::spawn(async move {
-            if let Some(data) = shared.dns.answer(&query).await {
-                let from = SocketAddrV4::new(DNS, 53);
-                let _ = events
-                    .send(Event::Datagram {
-                        from,
-                        to_port: port,
-                        data,
-                    })
-                    .await;
+            if let Some(answer) = shared.dns.answer(&query).await {
+                let _ = events.send(Event::Datagram((guest, (DNS, 53).into()), answer)).await;
             }
         });
     }
 
-    /// Tells the guest, as the gateway, that `frame` will not get through.
-    fn refuse(&mut self, frame: &[u8], reason: Icmpv4DstUnreachable) {
-        let ip = &frame[EthernetFrame::<&[u8]>::header_len()..];
-        self.tell_guest(packet::unreachable(GATEWAY, ip, reason));
+    /// Tells every node on the link — the guest — that the gateway is the
+    /// way out, and which network to make an address in.
+    fn advertise(&mut self) {
+        let advert = packet::router_advert(GATEWAY_LINK, GATEWAY_MAC, PREFIX, ROUTER_LIFETIME);
+        self.outbox.push(packet::ethernet(ALL_NODES_MAC, GATEWAY_MAC, &advert));
+        self.next_advert = Clock::now() + ADVERTISE_EVERY;
+    }
+
+    /// Tells the guest, as the gateway, why `packet` goes no further.
+    fn refuse(&mut self, packet: &[u8], why: Why) {
+        let gateway = match packet::source(packet) {
+            Some(IpAddr::V4(_)) => IpAddr::V4(GATEWAY),
+            Some(IpAddr::V6(_)) => IpAddr::V6(GATEWAY6),
+            None => return,
+        };
+        self.tell_guest(packet::icmp_error(gateway, why, packet));
     }
 
     fn tell_guest(&mut self, ip: Option<Vec<u8>>) {
@@ -454,28 +487,15 @@ impl Session {
                 }
             }
             Event::Wrote => {} // room again on the way out: the next step uses it
-            Event::Datagram { from, to_port, data } => {
-                self.tell_guest(Some(packet::udp(from, SocketAddrV4::new(GUEST, to_port), &data)));
-            }
-            Event::Report { from, kind, code, quote } => {
-                self.tell_guest(packet::icmp_error(from, kind, code, &quote));
-            }
-            Event::PortClosed((port, to)) => {
+            Event::Datagram((guest, far), data) => self.tell_guest(packet::udp(far, guest, &data)),
+            Event::PortClosed((guest, far)) => {
                 // What the far host says, about a datagram like the guest's.
-                let original = packet::udp(SocketAddrV4::new(GUEST, port), to, &[]);
-                self.tell_guest(packet::unreachable(
-                    *to.ip(),
-                    &original,
-                    Icmpv4DstUnreachable::PortUnreachable,
-                ));
+                let datagram = packet::udp(guest, far, &[]);
+                self.tell_guest(datagram.and_then(|d| packet::icmp_error(far.ip(), Why::PortClosed, &d)));
             }
-            Event::Echo {
-                from,
-                ident,
-                seq_no,
-                data,
-            } => {
-                self.tell_guest(Some(packet::echo_reply(from, GUEST, ident, seq_no, &data)));
+            Event::Report { from, why, quote } => self.tell_guest(packet::icmp_error(from, why, &quote)),
+            Event::Echo { key: (guest, far), seq_no, data } => {
+                self.tell_guest(packet::echo_reply(far.ip(), guest.ip(), guest.port(), seq_no, &data));
             }
         }
     }
@@ -486,17 +506,17 @@ impl Session {
         };
         if let Err(failure) = result {
             self.flows.remove(&key);
-            let ip = &syn[EthernetFrame::<&[u8]>::header_len()..];
-            return self.tell_guest(match failure {
-                Failure::Refused => packet::tcp_reset(ip),
-                Failure::Unreachable => packet::unreachable(GATEWAY, ip, Icmpv4DstUnreachable::HostUnreachable),
-            });
+            let ip = &syn[ETHERNET..];
+            return match failure {
+                Failure::Refused => self.tell_guest(packet::tcp_reset(ip)),
+                Failure::Unreachable => self.refuse(ip, Why::Unreachable),
+            };
         }
         let buffer = || tcp::SocketBuffer::new(vec![0; SOCKET_BUFFER]);
         let mut socket = tcp::Socket::new(buffer(), buffer());
         socket.set_nagle_enabled(false);
         let endpoint = IpListenEndpoint {
-            addr: Some(IpAddress::Ipv4(*key.1.ip())),
+            addr: Some(key.1.ip().into()),
             port: key.1.port(),
         };
         socket.listen(endpoint).expect("a fresh socket listens");
@@ -568,6 +588,24 @@ impl Session {
     }
 }
 
+/// The addresses the gateway answers on itself.
+fn is_gateway(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ip == GATEWAY || ip == DNS,
+        IpAddr::V6(ip) => ip == GATEWAY6 || ip == GATEWAY_LINK,
+    }
+}
+
+/// Whether the guest may send from `src`: 10.0.2.15, or an address it made in
+/// its IPv6 network. Its link-local address reaches the gateway alone, as on
+/// any link: routers forward nothing from one.
+fn from_guest(src: IpAddr, to_gateway: bool) -> bool {
+    match src {
+        IpAddr::V4(src) => src == GUEST,
+        IpAddr::V6(src) => src.segments()[..4] == PREFIX.segments()[..4] || (to_gateway && src.is_unicast_link_local()),
+    }
+}
+
 enum Packet {
     Tcp(Key, bool),
     Udp(Key, Probe),
@@ -576,11 +614,11 @@ enum Packet {
 }
 
 /// A datagram or echo request for out there: what the guest sent, with the
-/// TTL it arrived with and what an ICMP error about it would quote.
+/// hop limit it arrived with and what an ICMP error about it would quote.
 struct Probe {
     seq_no: u16,
     data: Vec<u8>,
-    ttl: u8,
+    hop_limit: u8,
     quote: Vec<u8>,
 }
 
@@ -589,7 +627,7 @@ struct Probe {
 /// One TCP connection out: dial, report, then carry bytes both ways.
 async fn flow(
     key: Key,
-    target: SocketAddrV4,
+    target: SocketAddr,
     shared: Arc<Shared>,
     mut from_guest: mpsc::Receiver<Bytes>,
     credit: Arc<Semaphore>,
@@ -633,7 +671,7 @@ async fn flow(
 }
 
 /// One UDP conversation: the guest's port with one destination.
-async fn datagrams(key: Key, target: SocketAddrV4, mut from_guest: mpsc::Receiver<Probe>, events: mpsc::Sender<Event>) {
+async fn datagrams(key: Key, target: SocketAddr, mut from_guest: mpsc::Receiver<Probe>, events: mpsc::Sender<Event>) {
     let Ok(socket) = egress::udp(target).await else { return };
     reports::enable(&socket);
     let mut hops = Hops::default();
@@ -643,19 +681,16 @@ async fn datagrams(key: Key, target: SocketAddrV4, mut from_guest: mpsc::Receive
         tokio::select! {
             out = from_guest.recv() => match out {
                 Some(probe) => {
-                    hops.set(&socket, probe.ttl);
+                    hops.set(&socket, probe.hop_limit);
                     quote = probe.quote;
                     let _ = socket.send(&probe.data).await;
                 }
                 None => return,
             },
             got = socket.recv(&mut buf) => {
-                let mut out: Vec<Event> = reports::drain(&socket)
-                    .into_iter()
-                    .map(|r| Event::Report { from: r.from, kind: r.kind, code: r.code, quote: quote.clone() })
-                    .collect();
+                let mut out: Vec<Event> = reports::drain(&socket).iter().map(|r| Event::report(r, &quote)).collect();
                 match got {
-                    Ok(n) => out.push(Event::Datagram { from: key.1, to_port: key.0, data: buf[..n].to_vec() }),
+                    Ok(n) => out.push(Event::Datagram(key, buf[..n].to_vec())),
                     // Without reports: "port unreachable" for an earlier datagram (Windows calls it a reset).
                     Err(e) if out.is_empty() && matches!(e.kind(), ErrorKind::ConnectionRefused | ErrorKind::ConnectionReset) => {
                         out.push(Event::PortClosed(key));
@@ -674,9 +709,10 @@ async fn datagrams(key: Key, target: SocketAddrV4, mut from_guest: mpsc::Receive
 }
 
 /// One ping conversation: the guest's echo identifier with one destination.
-async fn pings(key: Key, target: Ipv4Addr, mut from_guest: mpsc::Receiver<Probe>, events: mpsc::Sender<Event>) {
+async fn pings(key: Key, target: IpAddr, mut from_guest: mpsc::Receiver<Probe>, events: mpsc::Sender<Event>) {
     let Ok(socket) = egress::ping(target) else { return };
     reports::enable(&socket);
+    let (request, reply) = packet::echo(target.is_ipv6());
     let mut hops = Hops::default();
     // What errors about recent requests would quote, by sequence number.
     let mut quotes: VecDeque<(u16, Vec<u8>)> = VecDeque::new();
@@ -685,29 +721,29 @@ async fn pings(key: Key, target: Ipv4Addr, mut from_guest: mpsc::Receiver<Probe>
         tokio::select! {
             out = from_guest.recv() => match out {
                 Some(probe) => {
-                    hops.set(&socket, probe.ttl);
+                    hops.set(&socket, probe.hop_limit);
                     if quotes.len() == 64 {
                         quotes.pop_front();
                     }
                     quotes.push_back((probe.seq_no, probe.quote));
-                    let mut request = vec![8, 0, 0, 0, 0, 0];
-                    request.extend_from_slice(&probe.seq_no.to_be_bytes());
-                    request.extend_from_slice(&probe.data);
-                    let _ = socket.send(&request).await;
+                    let mut message = vec![request, 0, 0, 0, 0, 0];
+                    message.extend_from_slice(&probe.seq_no.to_be_bytes());
+                    message.extend_from_slice(&probe.data);
+                    let _ = socket.send(&message).await;
                 }
                 None => return,
             },
             got = socket.recv(&mut buf) => {
                 let mut out = Vec::new();
-                if let Ok(n) = got && n >= 8 && buf[0] == 0 {
+                if let Ok(n) = got && n >= 8 && buf[0] == reply {
                     let seq_no = u16::from_be_bytes([buf[6], buf[7]]);
-                    out.push(Event::Echo { from: *key.1.ip(), ident: key.0, seq_no, data: buf[8..n].to_vec() });
+                    out.push(Event::Echo { key, seq_no, data: buf[8..n].to_vec() });
                 }
                 for report in reports::drain(&socket) {
                     // The request it is about carries our sequence number.
                     let Some(seq_no) = report.sent.get(6..8).map(|s| u16::from_be_bytes([s[0], s[1]])) else { continue };
                     if let Some((_, quote)) = quotes.iter().find(|(s, _)| *s == seq_no) {
-                        out.push(Event::Report { from: report.from, kind: report.kind, code: report.code, quote: quote.clone() });
+                        out.push(Event::report(&report, quote));
                     }
                 }
                 for event in out {
@@ -721,15 +757,23 @@ async fn pings(key: Key, target: Ipv4Addr, mut from_guest: mpsc::Receiver<Probe>
     }
 }
 
-/// The TTL a socket sends with: what the guest's packet had left after this
-/// gateway, so that traceroute and mtr reach as far as they mean to.
+/// The hop limit a socket sends with: what the guest's packet had left after
+/// this gateway, so that traceroute and mtr reach as far as they mean to.
 #[derive(Default)]
 struct Hops(u8);
 
 impl Hops {
-    fn set(&mut self, socket: &tokio::net::UdpSocket, guest_ttl: u8) {
-        let left = guest_ttl.saturating_sub(1).max(1);
-        if left != self.0 && socket2::SockRef::from(socket).set_ttl_v4(left.into()).is_ok() {
+    fn set(&mut self, socket: &UdpSocket, guest_hop_limit: u8) {
+        let left = guest_hop_limit.saturating_sub(1).max(1);
+        if left == self.0 {
+            return;
+        }
+        let options = socket2::SockRef::from(socket);
+        let set = match socket.local_addr() {
+            Ok(SocketAddr::V6(_)) => options.set_unicast_hops_v6(left.into()),
+            _ => options.set_ttl_v4(left.into()),
+        };
+        if set.is_ok() {
             self.0 = left;
         }
     }

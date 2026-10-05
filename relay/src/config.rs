@@ -8,7 +8,7 @@
 //!
 //! [dns]
 //! upstream = "cloudflare-tls"     # quad9-tls, google-tls, system, or an address
-//! hosts = { "nas.home" = "192.168.1.10" }
+//! hosts = { "nas.home" = "192.168.1.10", "printer.home" = "fd00::20" }
 //!
 //! [egress]
 //! socks5 = "127.0.0.1:7890"       # TCP through a SOCKS5 proxy; default: direct
@@ -18,7 +18,7 @@
 //! allow_private = false           # private, loopback, link-local … addresses
 //! allow_ports = []                # empty: every port
 //! deny_ports = [25]
-//! aliases = { "10.0.2.4" = "192.168.1.10" }   # guest address → real one, unchecked
+//! aliases = { "10.0.2.4" = "192.168.1.10" }   # guest address → real one, unchecked; IPv6 too
 //!
 //! [limits]
 //! sessions = 4
@@ -29,7 +29,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 
 use serde::Deserialize;
 
@@ -53,7 +53,8 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct Dns {
     pub upstream: String,
-    pub hosts: HashMap<String, Ipv4Addr>,
+    /// Names the DNS server answers itself: A for an IPv4 address, AAAA for an IPv6 one.
+    pub hosts: HashMap<String, IpAddr>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -69,7 +70,7 @@ pub struct Policy {
     pub allow_private: bool,
     pub allow_ports: Vec<u16>,
     pub deny_ports: Vec<u16>,
-    pub aliases: HashMap<Ipv4Addr, Ipv4Addr>,
+    pub aliases: HashMap<IpAddr, IpAddr>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -178,13 +179,14 @@ mod tests {
     #[test]
     fn defaults_and_overrides() {
         let config = Config::parse(&format!(
-            "key = \"{}\"\n[policy]\naliases = {{ \"10.0.2.4\" = \"127.0.0.1\" }}\n[limits]\nidle = 60\n",
+            "key = \"{}\"\n[policy]\naliases = {{ \"10.0.2.4\" = \"127.0.0.1\", \"2001:db8::4\" = \"::1\" }}\n[limits]\nidle = 60\n",
             "ab".repeat(32)
         ))
         .unwrap();
         let keys = config.keys().unwrap();
         assert_eq!((keys.own, keys.session), (Some([0xab; 32]), None));
-        assert_eq!(config.policy.aliases[&Ipv4Addr::new(10, 0, 2, 4)], Ipv4Addr::LOCALHOST);
+        let alias = |guest: &str| config.policy.aliases[&guest.parse().unwrap()].to_string();
+        assert_eq!((alias("10.0.2.4"), alias("2001:db8::4")), ("127.0.0.1".into(), "::1".into()));
         assert_eq!((config.limits.idle, config.limits.sessions), (60, 4));
         assert_eq!(config.policy.deny_ports, [25]); // defaults hold for whatever a table leaves out
         assert!(Config::parse("key = \"short\"").is_err());

@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! page (v86 eth0) ──WebSocket, sealed frames (channel.rs)──▶ relay
-//!                                   session.rs: ARP, gateway, TCP (smoltcp), UDP, ICMP
+//!                                   session.rs: a gateway for IPv4 and IPv6 — ARP and
+//!                                     neighbour discovery, TCP (smoltcp), UDP, ICMP
 //!                                   dns.rs: 10.0.2.3, upstream over TLS
 //!                                   policy.rs: where a guest may go
 //!                                   egress.rs: out, directly or via SOCKS5

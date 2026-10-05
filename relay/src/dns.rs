@@ -3,19 +3,20 @@
 //! the way in the clear.
 
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 use hickory_resolver::config::{CLOUDFLARE, GOOGLE, NameServerConfig, QUAD9, ResolverConfig};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::op::{Message, MessageType, OpCode, ResponseCode};
-use hickory_resolver::proto::rr::{RData, Record, RecordType, rdata::A};
+use hickory_resolver::proto::rr::rdata::{A, AAAA};
+use hickory_resolver::proto::rr::{RData, Record, RecordType};
 use hickory_resolver::{Resolver, TokioResolver};
 
 use crate::config;
 
 pub struct Dns {
     resolver: TokioResolver,
-    hosts: HashMap<String, Ipv4Addr>,
+    hosts: HashMap<String, IpAddr>,
 }
 
 impl Dns {
@@ -58,8 +59,14 @@ impl Dns {
 
         let name = question.name().clone();
         if let Some(&ip) = self.hosts.get(&canonical(&name.to_ascii())) {
-            if question.query_type() == RecordType::A {
-                reply.add_answer(Record::from_rdata(name, 300, RData::A(A(ip))));
+            // The name is here: its one address, if that is what was asked for.
+            let data = match (ip, question.query_type()) {
+                (IpAddr::V4(ip), RecordType::A) => Some(RData::A(A(ip))),
+                (IpAddr::V6(ip), RecordType::AAAA) => Some(RData::AAAA(AAAA(ip))),
+                _ => None,
+            };
+            if let Some(data) = data {
+                reply.add_answer(Record::from_rdata(name, 300, data));
             }
             return reply.to_vec().ok();
         }
