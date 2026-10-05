@@ -1,16 +1,11 @@
 #!/bin/sh
-# Builds Microsoft Edit for the guest in a throwaway i686 Alpine container:
-# the guest's own userland, so it links against the musl and libgcc the image
-# has. The binary leaves on stdout, the log goes to stderr:
-#
-#   docker run --rm -i --platform linux/386 alpine:3.24 sh -c "$(cat build.sh)" > msedit
+# Microsoft Edit, as msedit, the name Microsoft asks distributions to give it,
+# and as edit beside it. Its search and replace load ICU, which the image has.
 
 set -eu
 
 VERSION=2.0.0
 COMMIT=d3f86975dc3c1298bf7300dbdf409a1df8d8b2b7
-
-exec 3>&1 1>&2 # stdout is for the binary alone
 
 apk add --no-cache git rust rust-src cargo icu-libs > /dev/null
 git -c advice.detachedHead=false clone -q --depth 1 --branch "v$VERSION" https://github.com/microsoft/edit /edit
@@ -28,5 +23,6 @@ RUSTC_BOOTSTRAP=1 \
 	EDIT_CFG_ICUI18N_SONAME="libicui18n.so.$icu" \
 	cargo build --release --config .cargo/release.toml
 
-echo "msedit: Edit $VERSION, ICU $icu, $(wc -c < target/release/edit) bytes"
-cat target/release/edit >&3
+install -D -m 755 target/release/edit "$OUT/usr/bin/msedit"
+ln -s msedit "$OUT/usr/bin/edit"
+echo "Edit $VERSION, ICU $icu, $(wc -c < target/release/edit) bytes"

@@ -1,0 +1,7 @@
+# esptool: Espressif's chips, ESP8266 and ESP32 alike
+esptool==5.4.0 --hash=sha256:fd756598db0a26c9975fa18511b08687c54bf2ce7322ede80cf1f5117dad1f50
+esp-pylib==1.1.5 --hash=sha256:be04824c2da8d0af3ae891f93d0e4059c14d5f2c3c828b19a1c12d916c6a4d74
+rich-click==1.9.9 --hash=sha256:365e7a9d0adb42e41ea832a0a12e02c44c079a26536dee688125eb9814f97274
+
+# mpremote: a MicroPython board's REPL and files
+mpremote==1.29.0 --hash=sha256:dedac688bcd65b9d4d5b7a66119332f2830000088321107994959333f53e41c8

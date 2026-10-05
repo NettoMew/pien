@@ -1,6 +1,6 @@
 // Builds the guest machine from nothing but Node — no Docker, no Linux host.
 //
-//   Alpine packages + image/rootfs + content + the kernel  →  public/vm/
+//   Alpine packages + image/rootfs + content + the tools + the kernel  →  public/vm/
 //
 //   fs-*.json      the whole directory tree, metadata only
 //   fs/*.bin.zst   file contents: one blob per file, named by hash, fetched on first read
@@ -18,12 +18,13 @@ import { BLOBS } from "../vm.config.ts";
 import { Repository } from "./lib/apk.ts";
 import { frontMatter, indexOf, readWriting } from "./lib/content.ts";
 import { cached } from "./lib/fetch.ts";
-import { editBuild } from "./lib/edit.ts";
 import { kernelBuild } from "./lib/kernel.ts";
 import { libraries } from "./lib/libraries.ts";
 import { info, size, step } from "./lib/log.ts";
 import { putHashed, VM, writeManifest } from "./lib/manifest.ts";
 import { RootFS } from "./lib/rootfs.ts";
+import { readTar } from "./lib/tar.ts";
+import { tools } from "./lib/tools.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const BUILT = Math.floor(Date.now() / 1000);
@@ -130,19 +131,20 @@ for (const { path, data } of writing) {
 }
 rootfs.write("/usr/share/home/posts", content.posts.map((post) => post.join("\t") + "\n").join(""));
 
-// ─── Edit ────────────────────────────────────────────────────────────────────
+// ─── Tools ───────────────────────────────────────────────────────────────────
 
-step("edit");
-const edit = await editBuild();
-if (!existsSync(edit.file)) {
-  console.error("No Edit built for this image yet: npm run build:edit (BUILD_HOST=<linux host> without local Docker)");
-  process.exit(1);
+// What image/tools/ builds, laid over the packages as it was laid out. Its
+// directories are the image's already, or implied.
+step("tools");
+for (const tool of await tools()) {
+  if (!existsSync(tool.file)) {
+    console.error(`${tool.name} is not built for this image yet: npm run build:tools (BUILD_HOST=<linux host> without local Docker)`);
+    process.exit(1);
+  }
+  const entries = [...readTar(await readFile(tool.file))].filter((entry) => entry.type !== "dir");
+  entries.forEach((entry) => rootfs.add(entry));
+  info(`${tool.name} · ${entries.length} files · ${size(entries.reduce((sum, entry) => sum + entry.data.length, 0))}`);
 }
-const msedit = await readFile(edit.file);
-// Its own name, as Microsoft asks of distributions, and the short one beside it.
-rootfs.write("/usr/bin/msedit", msedit, { mode: 0o755 });
-rootfs.symlink("/usr/bin/edit", "msedit");
-info(`Edit ${edit.version} · ${size(msedit.length)}`);
 
 // ─── Kernel ──────────────────────────────────────────────────────────────────
 

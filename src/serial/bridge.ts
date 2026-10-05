@@ -1,9 +1,16 @@
 // The serial port's side: Web Serial, with the computer's own driver behind it
-// (FTDI, CP210x, CH34x, PL2303, CDC-ACM). The guest's 8250 driver sets ttyS2
-// up as on any computer, and this does the same to the real port: speed and
-// framing, by opening it afresh, as Web Serial has it; break, DTR and RTS as
-// they happen, so a board's auto-reset into its bootloader works. Bytes go
-// both ways, and CTS, DSR, DCD and RI come back to the guest.
+// (FTDI, CP210x, CH34x, PL2303, CDC-ACM), or a paired Bluetooth device's
+// serial service (RFCOMM: HC-05 and the like, SPP or a service of its own).
+// The guest's 8250 driver sets ttyS2 up as on any computer, and for a wired
+// port this does the same to the real one: speed and framing, by opening it
+// afresh, as Web Serial has it; break, DTR and RTS as they happen, so a
+// board's auto-reset into its bootloader works. Bytes go both ways, and CTS,
+// DSR, DCD and RI come back to the guest. Over Bluetooth there are bytes
+// alone: the rest means nothing to RFCOMM, and is let be.
+//
+// A port that goes comes back by itself while the guest wants one: a wire
+// plugged in again, a Bluetooth device back in range or restarted. The
+// guest's ttyS2 stays as it was all the while, so tio, say, carries on.
 
 import { Cable } from "lucide-react";
 import { gesture } from "../gesture.ts";
@@ -23,6 +30,10 @@ const BREAK = 0x40;
 
 /** How often to look at the real port's modem lines: Web Serial has no event for them. */
 const STATUS_MS = 100;
+
+/** How often, and how many times, to try a Bluetooth device lost: two minutes, in all. */
+const AGAIN_MS = 3000;
+const AGAIN_TRIES = 40;
 
 /** The makers of common USB serial chips, by USB vendor ID. */
 const MAKERS: Record<number, string> = {
@@ -54,9 +65,27 @@ export function settings(divisor: number, lineControl: number): SerialOptions {
 const sameFraming = (a: SerialOptions, b: SerialOptions) =>
   a.baudRate === b.baudRate && a.dataBits === b.dataBits && a.stopBits === b.stopBits && a.parity === b.parity;
 
+/** The standard serial service, the serial port profile (SPP). */
+const SPP = uuid(0x1101);
+
+/** A Bluetooth service class ID in full, from a 16- or 32-bit one (as a number or in hex) or a whole UUID. */
+function uuid(id: number | string) {
+  if (typeof id === "string" && !/^[0-9a-f]{1,8}$/i.test(id)) return id.toLowerCase();
+  const short = typeof id === "number" ? id.toString(16) : id.toLowerCase();
+  return `${short.padStart(8, "0")}-0000-1000-8000-00805f9b34fb`;
+}
+
+/** The Bluetooth service `port` is, in full, or nothing for a wire. */
+const service = (port: SerialPort) => {
+  const id = port.getInfo().bluetoothServiceClassId;
+  return id === undefined ? undefined : uuid(id);
+};
+
 /** A real port lent to the guest's ttyS2. */
 class Link {
   readonly port: SerialPort;
+  /** A wire with a UART at its end: speed, framing and modem lines mean something. */
+  readonly wired: boolean;
   private readonly line: SerialLine;
   private readonly broken: (error: unknown) => void;
   private readonly stops: (() => void)[] = [];
@@ -69,13 +98,18 @@ class Link {
   private outgoing: number[] = [];
   private work: Promise<unknown> = Promise.resolve();
   private status?: ModemStatus;
+  /** DTR and RTS as last passed on. */
+  private dtr: boolean;
+  private rts: boolean;
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
 
   constructor(port: SerialPort, line: SerialLine, broken: (error: unknown) => void) {
     this.port = port;
+    this.wired = service(port) === undefined;
     this.line = line;
     this.broken = broken;
+    [this.dtr, this.rts] = [line.dtr, line.rts];
   }
 
   async open() {
@@ -84,11 +118,27 @@ class Link {
       this.line.onData((byte) => {
         if (this.outgoing.push(byte) === 1) queueMicrotask(() => this.handOver());
       }),
+    );
+    if (!this.wired) return;
+    this.stops.push(
       this.line.onSettings((divisor, lineControl) => this.settle(settings(divisor, lineControl), !!(lineControl & BREAK))),
-      this.line.onDtr((on) => this.then(() => this.port.setSignals({ dataTerminalReady: on }))),
-      this.line.onRts((on) => this.then(() => this.port.setSignals({ requestToSend: on }))),
+      this.line.onDtr(() => this.signal()),
+      this.line.onRts(() => this.signal()),
     );
     this.timer = setInterval(() => void this.watchStatus(), STATUS_MS);
+  }
+
+  /**
+   * DTR and RTS, both at once, as the guest's one write to the modem control
+   * register set them: esptool's reset, or stm32flash's, wants the two to
+   * move together. The register holds both by the first line's event, so the
+   * second line's, of the same write, finds nothing new to pass on.
+   */
+  private signal() {
+    const [dtr, rts] = [this.line.dtr, this.line.rts];
+    if (dtr === this.dtr && rts === this.rts) return;
+    [this.dtr, this.rts] = [dtr, rts];
+    this.then(() => this.port.setSignals({ dataTerminalReady: dtr, requestToSend: rts }));
   }
 
   /** Queues `step` after everything before it, the guest's bytes so far first. */
@@ -119,7 +169,7 @@ class Link {
   private async start(options: SerialOptions) {
     await this.port.open(options);
     this.options = options;
-    await this.port.setSignals({ dataTerminalReady: this.line.dtr, requestToSend: this.line.rts, break: this.breaking });
+    if (this.wired) await this.port.setSignals({ dataTerminalReady: this.dtr, requestToSend: this.rts, break: this.breaking });
     this.writer = this.port.writable!.getWriter();
     this.reading = this.read();
   }
@@ -139,9 +189,11 @@ class Link {
 
   /**
    * The port's bytes, to the guest. A framing, parity or overrun error ends
-   * one stream, and Web Serial hands a fresh one over: read on from that.
+   * one stream, and Web Serial hands a fresh one over: read on from that. A
+   * device lost ends them all, and leaves none.
    */
   private async read() {
+    let failure: unknown;
     while (this.port.readable && !this.closed) {
       const reader = (this.reader = this.port.readable.getReader());
       try {
@@ -150,12 +202,13 @@ class Link {
           if (done) return;
           this.line.write(value);
         }
-      } catch {
-        // The stream ended on an error; the loop takes up the next one, if any.
+      } catch (error) {
+        failure = error;
       } finally {
         reader.releaseLock();
       }
     }
+    if (!this.closed) this.broken(failure);
   }
 
   /** CTS, DSR, DCD and RI, passed on to the guest when one of them changes. */
@@ -183,21 +236,33 @@ class Link {
 
 let link: Link | undefined;
 
-/** The machine that asked for a port, while it wants one: a port plugged back in is lent to it again. */
+/** The machine that asked for a port, while it wants one: a port that comes back is lent to it again. */
 let asking: Machine | undefined;
 
-export async function open(machine: Machine) {
+/** The joins so far, one after another: the visitor's `serial`, a wire plugged back in, a Bluetooth device back. */
+let joining = Promise.resolve();
+
+/**
+ * Lends the guest a port: one this page was given before, or one the visitor
+ * chooses. The browser lists wired ports and paired Bluetooth devices with
+ * the standard serial service (SPP); `id` asks for one with an RFCOMM
+ * service of its own instead.
+ */
+export async function open(machine: Machine, id?: string) {
   const serial = navigator.serial as Serial | undefined;
   if (!serial) return down(machine, "unsupported");
   watch(serial);
   asking = machine;
   if (link) return up(machine, link.port);
 
-  let port = (await serial.getPorts())[0];
+  const wanted = id && uuid(id);
+  const granted = await serial.getPorts();
+  let port = wanted ? granted.find((port) => service(port) === wanted) : granted[0];
   if (!port) {
+    const options = wanted ? { allowedBluetoothServiceClassIds: [wanted] } : {};
     try {
       // The browser lists ports only as the visitor touches the page.
-      port = await gesture("Choose a serial port", Cable, () => serial.requestPort());
+      port = await gesture("Choose a serial port", Cable, () => serial.requestPort(options));
     } catch {
       return down(machine, "cancelled");
     }
@@ -212,16 +277,27 @@ export async function release(machine?: Machine) {
   if (machine) down(machine, "off");
 }
 
-async function join(port: SerialPort, machine: Machine) {
-  const joining: Link = new Link(port, machine.serial(), (error) => void broken(joining, error));
-  try {
-    await joining.open();
-  } catch (error) {
-    // Opening fails so when another program has the port.
-    return down(machine, named(error, "NetworkError") || named(error, "InvalidStateError") ? "busy" : `error ${describe(error)}`);
-  }
-  link = joining;
-  up(machine, port);
+/**
+ * Lends `port` to the guest, unless a port is lent already; whether one is.
+ * `quietly`, a failure goes unsaid: the guest heard already why it has none.
+ */
+function join(port: SerialPort, machine: Machine, quietly = false) {
+  const turn = joining.then(async () => {
+    if (link) return true;
+    const joined: Link = new Link(port, machine.serial(), (error) => void broken(joined, error));
+    try {
+      await joined.open();
+    } catch (error) {
+      // Opening fails so when another program has the port.
+      if (!quietly) down(machine, named(error, "NetworkError") || named(error, "InvalidStateError") ? "busy" : `error ${describe(error)}`);
+      return false;
+    }
+    link = joined;
+    up(machine, port);
+    return true;
+  });
+  joining = turn.then(() => {});
+  return turn;
 }
 
 async function drop(why?: string) {
@@ -231,11 +307,26 @@ async function drop(why?: string) {
   if (why && asking) down(asking, why);
 }
 
-/** A transfer failed: if the port was unplugged, the disconnect event says so in a moment; else it is an error. */
+/**
+ * A transfer failed, or the port's bytes ended: if a wire was unplugged, the
+ * disconnect event says so in a moment; else it is an error. A Bluetooth
+ * device has no such event to come back with, and is tried again.
+ */
 async function broken(failed: Link, error: unknown) {
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  if (link === failed) await drop(`error ${describe(error)}`);
+  await sleep(200);
+  if (link !== failed) return;
+  await drop(`error ${describe(error)}`);
+  if (!failed.wired) await again(failed.port);
 }
+
+async function again(port: SerialPort) {
+  for (let tries = 0; tries < AGAIN_TRIES; tries++) {
+    await sleep(AGAIN_MS);
+    if (!asking || link || (await join(port, asking, true))) return;
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let watching = false;
 
@@ -250,12 +341,18 @@ function watch(serial: Serial) {
   });
 }
 
-/** Tells hostd: serial up <name>, the name the maker's and the USB IDs. */
+/**
+ * Tells hostd: serial up <device> <name>. The device is named as Linux names
+ * the kind: ttyUSB0 for a wire, rfcomm0 for Bluetooth. The name is the
+ * maker's and the USB IDs, or the Bluetooth service.
+ */
 function up(machine: Machine, port: SerialPort) {
+  const bluetooth = service(port);
+  if (bluetooth) return machine.control(`serial up rfcomm0 Bluetooth, ${bluetooth === SPP ? "serial port profile" : `service ${bluetooth}`}`);
   const { usbVendorId: vendor, usbProductId: product } = port.getInfo();
   const hex = (n: number) => n.toString(16).padStart(4, "0");
   const name = vendor === undefined ? "serial port" : `${MAKERS[vendor] ?? "USB serial"} (${hex(vendor)}:${hex(product ?? 0)})`;
-  machine.control(`serial up ${name}`);
+  machine.control(`serial up ttyUSB0 ${name}`);
 }
 
 function down(machine: Machine, why: string) {

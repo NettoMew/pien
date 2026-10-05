@@ -23,7 +23,7 @@ const CSI = /\x1b\[[0-9;?<>=]*[a-zA-Z~]/g;
 const plain = (raw: string) => raw.replace(OSC, "").replace(CSI, "").replace(/\r/g, "").trim();
 
 /** The machine named on the command line (home unless told otherwise), up at its prompt. */
-export async function guest(onPrivate: (verb: string, argument: string, machine: Machine) => void) {
+export async function guest(onPrivate: (verb: string, fields: string[], machine: Machine) => void) {
   const name = process.argv[2] ?? "home";
   if (!(name in machines)) throw new Error(`no machine called ${name}; there is ${Object.keys(machines).join(" and ")}`);
   const machine = new Machine({
@@ -35,7 +35,7 @@ export async function guest(onPrivate: (verb: string, argument: string, machine:
   term.onData((data) => machine.write(data));
   term.parser.registerOscHandler(7337, (data) => {
     const [verb, ...rest] = data.split(";");
-    onPrivate(verb ?? "", rest.join(";"), machine);
+    onPrivate(verb ?? "", rest, machine);
     return true;
   });
   const decoder = new TextDecoder();

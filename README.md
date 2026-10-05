@@ -5,7 +5,7 @@
 ```sh
 npm install
 npm run build:kernel   # 在 Docker 里编译内核；本机没有 Docker 时：BUILD_HOST=<Linux 主机> npm run build:kernel
-npm run build:edit     # 同样在 Docker 里编译 Microsoft Edit（i686 的 Alpine 容器）
+npm run build:tools    # 同样在 Docker 里编译 Alpine 没有的工具（image/tools/，i686 的 Alpine 容器）
 npm run build:vm       # 构建镜像，再在 Node 里开机、存一份快照
 npm run dev            # http://localhost:5173
 ```
@@ -16,7 +16,7 @@ npm run dev            # http://localhost:5173
 | `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件 |
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
-| `npm run check:serial` | 给机器插一根假的 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍（见 [docs/serial.md](docs/serial.md)） |
+| `npm run check:serial` | 给机器插几根假的串口线：一根 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍；一块停在 U-Boot `loady` 的板子，`sb` 往里传文件；一个蓝牙串口，走远再回来（见 [docs/serial.md](docs/serial.md)） |
 | `npm run check:usb` | 给机器插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
@@ -34,7 +34,7 @@ npm run dev            # http://localhost:5173
 
 **内核**（`image/kernel/`）。在 `allnoconfig` 上只开 v86 需要的东西：两个串口、virtio 控制台、经 virtio 走的 9p，再加上工作台那块盘要的 IDE（`ata_piix`）、squashfs 和 overlayfs。全部编进内核，内核自己把浏览器提供的 9p 目录挂成根文件系统，不需要模块，也不需要 initramfs。编译在一次性的 Alpine 容器里进行，版本和源码校验和都固定。
 
-**镜像**（`scripts/build-image.ts`）。只用 Node：读 Alpine x86 仓库的索引，解出依赖，解包，叠上 `image/rootfs/` 和 `content/`，输出：
+**镜像**（`scripts/build-image.ts`）。只用 Node：读 Alpine x86 仓库的索引，解出依赖（连同 install_if 带进来的，比如每个 Python 包的字节码），解包，叠上 `image/rootfs/`、`content/` 和 `image/tools/` 里另外编译好的工具（`npm run build:tools`），输出：
 
 - 一份目录树，只有元数据；
 - 每个文件一个块，按内容哈希命名，客户机第一次读到时才下载；
@@ -50,13 +50,13 @@ npm run dev            # http://localhost:5173
 
 **登录**（`press/`、`src/account/`，[docs/login.md](docs/login.md)）。只有站长一个账号，没有口令：通行密钥是正门，GitHub 是从新设备回来的后门，弹出窗口里走完，页面和机器都不动。第一个通行密钥要服务器给的一次性码（`press enroll`）。press 是一个 TypeScript 小服务；它签发的登录是自证的 token，中继拿同一把会话密钥自己验，不用问谁。客户机里的命令经一条带暗号的问答通道问页面（`src/ask.ts`），终端里显示出来的文字冒充不了。
 
-**编辑器**。nano，和 [Microsoft Edit](https://github.com/microsoft/edit)（`edit`，也叫 `msedit`）。Edit 不在 Alpine 的仓库里，`image/edit/build.sh` 在 i686 的 Alpine 容器里从固定的版本编译它，链接客户机自己的 musl；查找替换要的 ICU 用到才读。
+**编辑器**。nano，和 [Microsoft Edit](https://github.com/microsoft/edit)（`edit`，也叫 `msedit`）。Edit 不在 Alpine 的仓库里，`image/tools/edit/build.sh` 在 i686 的 Alpine 容器里从固定的版本编译它，链接客户机自己的 musl；查找替换要的 ICU 用到才读。
 
 **手机**。客户机里有真正的 adb 和 fastboot，经 WebUSB 连访客电脑上的手机（[docs/workbench.md](docs/workbench.md)）。
 
 **工作台**（`image/workbench/`，已封存）。一台 768 MB 的大机器，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim。
 
-**串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，用 tio 连。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。
+**串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，配对过的蓝牙串口成了 `/dev/rfcomm0`，用 tio 连。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。lrzsz、esptool、mpremote、stm32flash、avrdude 都在，用到串口时自己去借。
 
 **排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点，单独一行的图片直接画在终端里（iTerm2 的内联图片序列，页面用 `@xterm/addon-image` 画）。输出到管道时仍然是原文。
 
@@ -84,7 +84,7 @@ npm run dev            # http://localhost:5173
 | 内核 | 1.6 MB；客户机可用内存 58 MB |
 | 整个系统 | 1763 个文件块，92 MB，压缩后 26 MB，全部按需加载 |
 | `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
-| 串口 | 假线上 64 KB 在 1500000 波特下往返 1.2 秒；页面这一侧用到才加载 |
+| 串口 | 假线上 64 KB 在 1500000 波特下往返 1.4 秒；`sb` 往假 U-Boot 传 50 KB 1.5 秒；页面这一侧用到才加载 |
 | 程序第一次运行 | 网络延迟 100 ms 时，`adb version` 9.0 秒 → 2.7 秒（它要 57 个库），`curl --version` 2.7 秒 → 1.7 秒：页面把库一起取来 |
 
 ## 接下来
@@ -122,3 +122,5 @@ npm run dev            # http://localhost:5173
 - **fish 第一次启动会跑 Python**：fish 4 把从手册页生成补全的脚本编进了自己的二进制，第一次交互启动时只要有 python3 就在后台跑它，排除 `/usr/share/fish/tools` 也拦不住。镜像里没有手册页，这一趟白跑，还把 5 MB 的 libpython 留在快照里（home 的快照因此从 5.4 MB 涨到 6.8 MB）。`/etc/rc` 先建好它要填的目录 `~/.cache/fish/generated_completions`，它就不跑了。
 - **Web Serial 只在打开时收速度**：改速度、帧格式都得把串口关了再按新设置打开。客户机的 8250 驱动每次改完设置，最后一步都是在关上分频锁存的情况下写一次线路控制寄存器；页面在 v86 的这个寄存器字段上装了一个访问器，正好在这一刻知道该重开了，用不着轮询。
 - **16550 的速度只到 115200**：默认时钟除以 16 再除以分频，分频最小是 1。`/etc/rc` 用 `setserial` 把 ttyS2 的时钟调高到 24 MHz（除以 16 之后），1500000、3000000 都成了整数分频；差一点点的（115200 这类）由页面对回标准速度。
+- **Web Serial 丢了设备时不出声**：读流出错后 `port.readable` 变成 null，读循环就静静地停了。USB 线还有 `disconnect` 事件报信，蓝牙设备走远了什么事件也没有，要到客户机下次写才会发现。读循环现在在流一个也不剩时报“坏了”，蓝牙的由页面隔一会儿重开。
+- **装好的 Python 包会在每次运行时重编字节码**：客户机里的访客写不了 `/usr/lib/python3.14`，`__pycache__` 写不进去，每次 import 都在模拟的 CPU 上从源码编一遍。Alpine 的字节码在单独的 `-pyc` 包里，靠 install_if 跟着 `pyc` 装，镜像的依赖解析因此学会了 install_if；`image/tools/python/` 装的几个包，构建时用不核对源码时间的字节码（`unchecked-hash`）编好。

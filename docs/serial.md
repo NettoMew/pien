@@ -1,6 +1,6 @@
 # 串口（`serial`）
 
-USB 转串口线插在访客的电脑上，客户机里就有一个真正的串口：
+访客电脑上的 USB 转串口线，或者配对过的蓝牙串口（HC-05 这一类），在客户机里都是一个真正的串口：
 
 ```
 guest@zutto-issho ~> serial
@@ -9,29 +9,58 @@ guest@zutto-issho ~> serial
 guest@zutto-issho ~> tio -b 1500000 /dev/ttyUSB0
 ```
 
-两台机器上都有。第一次 `serial` 时浏览器弹出列表让访客选，选过的线之后直接用，拔了再插也会自动接回。终端用 [tio](https://github.com/tio/tio)，busybox 的 `microcom` 也在；python3 用标准库的 `termios` 也一样能用。
+蓝牙的叫 `/dev/rfcomm0`。两台机器上都有。第一次 `serial` 时浏览器弹出列表让访客选（手机上先点一下屏幕上浮出的那枚键），选过的之后直接用。线拔了再插、蓝牙设备走远了又回来，都会自动接回，客户机里开着的 tio 接着用。
+
+## 工具
+
+| 命令 | 用来 |
+|---|---|
+| `tio` | 终端；Ctrl-t x、Ctrl-t y 用 XMODEM、YMODEM 发文件 |
+| `sz` `sx` `sb`，`rz` `rx` `rb` | [lrzsz](https://github.com/UweOhse/lrzsz)：ZMODEM、XMODEM、YMODEM 收发，配合 U-Boot 的 `loadx`、`loady` |
+| `esptool`、`espefuse`、`espsecure` | 乐鑫的芯片，ESP8266 和各型号 ESP32 |
+| `mpremote` | MicroPython 板子的 REPL 和文件 |
+| `stm32flash` | STM32，经芯片 ROM 里的串口 bootloader |
+| `avrdude` | AVR：Arduino 的 bootloader（`-c arduino`、`-c urclock`），STK500 这类串口编程器 |
+
+这些工具不用先敲 `serial`，也不用写串口在哪：还没借到串口时它们先借一个，再按各自的方式告诉它。tio 和 stm32flash 加在命令最后，avrdude 加 `-P`，esptool 经 `ESPTOOL_PORT`，mpremote 在前面加 `connect`，lrzsz 把标准输入输出接上去。自己指定了串口，或者这一次用不着串口（`esptool merge-bin`、`mpremote version`），就原样运行。都在 `/etc/fish/conf.d/serial-tools.fish`。
+
+往 U-Boot 传文件，在 tio 里敲 `loady 0x82000000`，再 Ctrl-t y 选文件；或者退出 tio（Ctrl-t q），U-Boot 还在等，`sb u-boot.itb` 就传过去了。
+
+lrzsz 不在 Alpine 里，esptool 和 mpremote 在 PyPI 上。它们各有一份固定版本的构建（`image/tools/`，`npm run build:tools`）：lrzsz 用 2026 年 10 月的 0.13.1，几十年来第一个新版，修了收发两头的老溢出；Python 那一层只装这几个包本身，按哈希核对，依赖全用 Alpine 的包，字节码在构建时编好，客户机里不用再编。
 
 ```
-tio、stty、python3…… ──▶ /dev/ttyS2（Linux 自己的 8250 驱动）──▶ v86 模拟的 16550
+tio、stty、esptool…… ──▶ /dev/ttyS2（Linux 自己的 8250 驱动）──▶ v86 模拟的 16550
    ──▶ 页面 src/serial/ ──Web Serial──▶ 电脑自己的驱动（FTDI、CP210x、CH34x、PL2303、CDC-ACM）──▶ 线
+                                    └─▶ 蓝牙（RFCOMM）──▶ HC-05 这类模块
 ```
 
 ## 怎么做的
 
-**客户机这一侧是一颗真的 UART**。v86 模拟 16550 串口芯片，第三个口（COM3）打开后就是客户机的 ttyS2。程序设串口的方式和在任何一台电脑上一样：termios 设速度、数据位、校验、停止位，ioctl 拉 DTR、RTS，发 break，读 CTS、DSR、DCD、RI。它们最后都落成芯片寄存器上的读写，页面从寄存器上把这些设置读出来，照样设到真的串口上。`/dev/ttyUSB0` 是接上线时 hostd 建的指向 ttyS2 的链接。
+**客户机这一侧是一颗真的 UART**。v86 模拟 16550 串口芯片，第三个口（COM3）打开后就是客户机的 ttyS2。程序设串口的方式和在任何一台电脑上一样：termios 设速度、数据位、校验、停止位，ioctl 拉 DTR、RTS，发 break，读 CTS、DSR、DCD、RI。它们最后都落成芯片寄存器上的读写，页面从寄存器上把这些设置读出来，照样设到真的串口上。`/dev/ttyUSB0`、`/dev/rfcomm0` 是接上时 hostd 建的指向 ttyS2 的链接；串口断开再接回，ttyS2 一直在，开着它的程序察觉不到。
 
 **速度**。16550 的速度是“时钟 ÷ 16 ÷ 一个整数分频”。客户机开机时用 `setserial` 把 ttyS2 的时钟设为 384 MHz（÷16 之后是 24 MHz），1500000（Rockchip 的调试串口）、2000000、3000000 都是整数分频，精确无误。115200、921600 这些分频之后差不到 0.2%，页面把它们对回本来的标准速度再交给 Web Serial，所以线上的速度也是精确的。
 
-**设置一变就重开**。Web Serial 只能在打开串口时给定速度和帧格式。驱动每次改完设置，最后一步都是在关上分频锁存的情况下写一次线路控制寄存器；页面在这一刻比较新旧设置，变了就把真串口关掉、按新设置重新打开，在此之前没写完的字节先写完。DTR、RTS 和 break 一变就跟着变，所以 esptool 用 DTR、RTS 让 ESP32 复位进下载模式、Arduino 用 DTR 复位，都和在桌上一样。CTS、DSR、DCD、RI 每 100 毫秒看一次（Web Serial 没有这些线变化的事件），变了就反映到客户机读到的芯片状态里。
+**设置一变就重开**。Web Serial 只能在打开串口时给定速度和帧格式。驱动每次改完设置，最后一步都是在关上分频锁存的情况下写一次线路控制寄存器；页面在这一刻比较新旧设置，变了就把真串口关掉、按新设置重新打开，在此之前没写完的字节先写完。CTS、DSR、DCD、RI 每 100 毫秒看一次（Web Serial 没有这些线变化的事件），变了就反映到客户机读到的芯片状态里。
 
-**驱动是电脑自己的**。Web Serial 走操作系统的串口驱动，FT232 在 Windows、macOS、Linux 上都有现成的驱动，页面不实现任何芯片的协议。
+**DTR 和 RTS 一起变**。esptool 让 ESP32 复位进下载模式、stm32flash 让板子进 bootloader，靠的是 DTR、RTS 按顺序变；常见的自动复位电路是两个三极管交叉接，两条线同时变和先后变，结果不一样。客户机一次写下两条线（`TIOCMSET`）是对调制解调器控制寄存器的一次写，v86 在这一次写里先后报出两条线的变化；页面在第一条报出时就从寄存器读两条线，一次 `setSignals` 一起设，第二条报出时已经没有新东西。前后的字节也按原来的顺序走。
+
+**蓝牙**。Web Serial 把配对过的、带标准串口服务（SPP）的蓝牙设备和 USB 线列在一起；服务是自己定的 UUID 的，用 `serial --uuid <UUID>` 去要。RFCOMM 上只有字节：速度和帧格式是蓝牙模块自己的设置（HC-05 用 AT 命令设），也没有 DTR、RTS 这些线，客户机怎么设都由它，页面不重开、不传。设备走远或者重启，蓝牙不像 USB 那样有“插回来”的事件，页面每 3 秒试着重新打开一次，两分钟为止。
+
+**驱动是电脑自己的**。Web Serial 走操作系统的串口驱动，FT232、CP210x、CH340 在 Windows、macOS、Linux 上都有现成的驱动，页面不实现任何芯片的协议。
 
 ## 限制
 
-只有电脑上的 Chrome 和 Edge 有 Web Serial。Android 上的 Chrome 从 148 版起才有，而且只支持蓝牙串口，USB 线还要等 Android 系统本身支持。
+电脑上的 Chrome 和 Edge 有 Web Serial，USB 线和蓝牙都行。Android 上的 Chrome 也有，但只有蓝牙：手机上用 HC-05 这类模块正好。Firefox 和 Safari 没有。
 
-模拟的芯片一个字节一个字节地收发：假线上 64 KB 在 1500000 波特下往返要 1.2 秒，每个方向约 55 KB/s，比线速慢；115200 及以下比线还快。看日志、敲命令、刷固件都够用。
+蓝牙上没有 DTR、RTS，esptool 和 Arduino 的自动复位做不到，要手按板子上的键进 bootloader。
+
+模拟的芯片一个字节一个字节地收发：假线上 64 KB 在 1500000 波特下往返要 1.4 秒，每个方向约 47 KB/s，比线速慢；115200 及以下比线还快。看日志、敲命令、刷固件都够用。Python 写的工具启动要几秒（`esptool version` 4.4 秒，`mpremote version` 2.2 秒），都是模拟的 CPU 在算。
 
 ## 测试
 
-`npm run check:serial` 给客户机插一根假的转串口线（按 USB ID 是 FTDI，输出接回输入），用客户机里的 stty、tio、python3 把整条路走一遍，页面这一侧用的就是 `src/serial/` 本身。
+`npm run check:serial` 给客户机插几根假的线，页面这一侧用的就是 `src/serial/` 本身：
+
+- 一根转串口线，按 USB ID 是 FTDI，输出接回输入：用 stty、tio、python3 把速度、帧格式、数据、各条信号线走一遍，一起设的 DTR、RTS 一起到；
+- 一块停在 U-Boot `loady` 的板子：一个 YMODEM 接收端，和 U-Boot 一样先发 `C`、按 CRC 核对每一块。`sb` 自己借到串口，把 50 KB 传过去，一字不差；
+- esptool 和 mpremote 能跑，用不着串口时不去借；
+- 一个配对过的蓝牙设备：设置和信号线都不传，字节照常走；走远了再回来会自动接回，一直开着它的程序接着写；`--uuid` 要到的是自己定服务的那一个。

@@ -12,10 +12,16 @@ export default {
     // A phone on the visitor's USB (src/usb/), on either machine. Alpine's adb
     // and fastboot bring python3 along.
     "android-tools-adb", "android-tools-fastboot", "socat",
-    // A serial port from the visitor's computer (src/serial/), and a terminal for it.
-    "tio",
-    // Editors: nano, and Microsoft Edit (image/edit/, built apart), whose
-    // search and replace load ICU.
+    // A serial port from the visitor's computer (src/serial/), a terminal for
+    // it, and what flashes the boards at its other end: STM32s through their
+    // ROM bootloader, and AVRs. Built apart (image/tools/): lrzsz, for U-Boot's
+    // loadx and loady; esptool, for Espressif's chips; mpremote, for MicroPython.
+    "tio", "stm32flash", "avrdude",
+    // The Python layer's libraries (image/tools/python/), and byte code for
+    // every Python package: pyc brings each one's -pyc along (install_if).
+    "python3", "pyc", "py3-pyserial", "py3-cryptography", "py3-bitstring", "py3-reedsolo", "py3-yaml", "py3-intelhex", "py3-click", "py3-rich", "py3-platformdirs",
+    // Editors: nano, and Microsoft Edit (image/tools/edit/), whose search and
+    // replace load ICU.
     "nano", "icu-libs",
   ],
 

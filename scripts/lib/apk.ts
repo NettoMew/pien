@@ -13,6 +13,8 @@ export interface Package {
   priority: number;
   depends: string[];
   provides: string[];
+  /** Installed of itself once all of these are (apk's install_if): a package's -pyc, say, with pyc. */
+  installIf: string[];
 }
 
 function parseIndex(text: string, repo: string): Package[] {
@@ -20,7 +22,7 @@ function parseIndex(text: string, repo: string): Package[] {
     .split("\n\n")
     .filter(Boolean)
     .map((block) => {
-      const pkg: Package = { name: "", version: "", repo, size: 0, priority: 0, depends: [], provides: [] };
+      const pkg: Package = { name: "", version: "", repo, size: 0, priority: 0, depends: [], provides: [], installIf: [] };
       for (const line of block.split("\n")) {
         const value = line.slice(2);
         switch (line[0]) {
@@ -30,6 +32,7 @@ function parseIndex(text: string, repo: string): Package[] {
           case "k": pkg.priority = Number(value); break;
           case "D": pkg.depends = value.split(" "); break;
           case "p": pkg.provides = value.split(" "); break;
+          case "i": pkg.installIf = value.split(" "); break;
         }
       }
       return pkg;
@@ -43,6 +46,7 @@ export class Repository {
   readonly arch: string;
   private byName = new Map<string, Package>();
   private byProvide = new Map<string, Package>();
+  private conditional: Package[] = [];
 
   constructor(mirror: string, branch: string, arch: string) {
     this.base = `${mirror}/${branch}`;
@@ -56,7 +60,10 @@ export class Repository {
       if (!index) throw new Error(`apk: ${repo} has no APKINDEX`);
 
       for (const pkg of parseIndex(index.data.toString("utf8"), repo)) {
-        if (!this.byName.has(pkg.name)) this.byName.set(pkg.name, pkg);
+        if (!this.byName.has(pkg.name)) {
+          this.byName.set(pkg.name, pkg);
+          if (pkg.installIf.length) this.conditional.push(pkg);
+        }
         for (const provide of pkg.provides) {
           const key = bareName(provide);
           const prev = this.byProvide.get(key);
@@ -74,17 +81,29 @@ export class Repository {
     return pkg;
   }
 
-  /** The transitive closure of `names`, honouring `replace` substitutions. */
+  /**
+   * The transitive closure of `names`, honouring `replace` substitutions,
+   * and with what install_if brings in once its conditions are met, as apk
+   * does. Versions in either are not compared: the index has one of each.
+   */
   resolve(names: string[], replace: Record<string, string> = {}): Package[] {
     const selected = new Map<string, Package>();
+    const present = new Set<string>();
     const visit = (dep: string) => {
       if (dep.startsWith("!")) return;
       const pkg = this.lookup(replace[bareName(dep)] ?? dep);
       if (selected.has(pkg.name)) return;
       selected.set(pkg.name, pkg);
+      for (const name of [pkg.name, ...pkg.provides]) present.add(bareName(name));
       pkg.depends.forEach(visit);
     };
     names.forEach(visit);
+    const met = (condition: string) => (condition.startsWith("!") ? !present.has(bareName(condition.slice(1))) : present.has(bareName(condition)));
+    for (let more = true; more; ) {
+      const due = this.conditional.filter((pkg) => !selected.has(pkg.name) && pkg.installIf.every(met));
+      due.forEach((pkg) => visit(pkg.name));
+      more = due.length > 0;
+    }
     return [...selected.values()];
   }
 

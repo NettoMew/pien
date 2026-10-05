@@ -333,7 +333,7 @@ async function browserKey(): Promise<KeyObject> {
   throw new Error("the browser keeps no adb key");
 }
 
-const { name, machine, run } = await guest((verb, tool, machine) => {
+const { name, machine, run } = await guest((verb, [tool = ""], machine) => {
   if (verb === "usb") void usb(tool, machine);
 });
 const checks = new Checks();

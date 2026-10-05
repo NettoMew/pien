@@ -1,10 +1,10 @@
-// `serial` on the page's side: a serial port on this computer, lent to the
-// guest as its ttyS2 (see image/rootfs/etc/fish/functions/serial.fish and
-// hostd). Only this much loads with the page; the rest comes with the first
-// port.
+// `serial` on the page's side: a serial port on this computer, wired or over
+// Bluetooth, lent to the guest as its ttyS2 (see
+// image/rootfs/etc/fish/functions/serial.fish and hostd). Only this much
+// loads with the page; the rest comes with the first port.
 //
 // The guest learns what happened over the control line (hostd):
-//   serial up <name>
+//   serial up <device> <name>     ttyUSB0 or rfcomm0, and what it is
 //   serial down <why>
 
 import type { Machine } from "../machine.ts";
@@ -12,12 +12,12 @@ import type { Machine } from "../machine.ts";
 let bridge: Promise<typeof import("./bridge.ts")> | undefined;
 let queue: Promise<unknown> = Promise.resolve();
 
-/** `serial;open` and `serial;off` from the guest, one after another. */
-export function serial(verb: string, machine: Machine) {
+/** `serial;open[;<Bluetooth service>]` and `serial;off` from the guest, one after another. */
+export function serial(verb: string, machine: Machine, service?: string) {
   queue = queue
     .then(async () => {
       const { open, release } = await (bridge ??= import("./bridge.ts"));
-      if (verb === "open") await open(machine);
+      if (verb === "open") await open(machine, service || undefined);
       if (verb === "off") await release(machine);
     })
     .catch((error) => console.error("serial:", error));
