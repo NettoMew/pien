@@ -37,7 +37,8 @@ npm run dev            # http://localhost:5173
 **镜像**（`scripts/build-image.ts`）。只用 Node：读 Alpine x86 仓库的索引，解出依赖，解包，叠上 `image/rootfs/` 和 `content/`，输出：
 
 - 一份目录树，只有元数据；
-- 每个文件一个块，按内容哈希命名，客户机第一次读到时才下载。
+- 每个文件一个块，按内容哈希命名，客户机第一次读到时才下载；
+- 每个程序要加载的共享库（读 ELF 的 DT_NEEDED，一路追下去，`scripts/lib/libraries.ts`）。客户机第一次读到某个程序时，页面把它的库一起取来（`src/prefetch.ts`），而不是等动态链接器一个接一个地要，一个一来回。musl 和 fish 自己用的库本来就在内存里，不算在内。
 
 客户机里的 fish 是原装的：提示符、配色、补全都没改，只关掉了欢迎语。自带的脚本和 `md.awk` 也只按名字用颜色（`cyan`、`brblack`……），每种颜色长什么样，由终端的调色板（`src/theme.ts`）决定。主机名在 `image/image.config.ts`，`/etc/hostname`、`/etc/hosts` 和页面标题都从它来。
 
@@ -84,6 +85,7 @@ npm run dev            # http://localhost:5173
 | 整个系统 | 1763 个文件块，92 MB，压缩后 26 MB，全部按需加载 |
 | `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
 | 串口 | 假线上 64 KB 在 1500000 波特下往返 1.2 秒；页面这一侧用到才加载 |
+| 程序第一次运行 | 网络延迟 100 ms 时，`adb version` 9.0 秒 → 2.7 秒（它要 57 个库），`curl --version` 2.7 秒 → 1.7 秒：页面把库一起取来 |
 
 ## 接下来
 

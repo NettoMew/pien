@@ -32,6 +32,9 @@ type JsonNode = [string, number, number, number, number, number, JsonNode[] | st
 
 const HASH_LENGTH = 10; // must match v86's tools/fs2json.py
 
+/** The blob a file's bytes go into, by its content: also the key v86's 9p storage reads it by. */
+export const blobName = (data: Buffer) => `${createHash("sha256").update(data).digest("hex").slice(0, HASH_LENGTH)}.bin.zst`;
+
 export class RootFS {
   readonly root: Dir;
   readonly mtime: number;
@@ -138,7 +141,7 @@ export class RootFS {
 
     const blob = async (data: Buffer) => {
       const hash = createHash("sha256").update(data).digest("hex");
-      const name = `${hash.slice(0, HASH_LENGTH)}.bin.zst`;
+      const name = blobName(data);
       const prev = seen.get(name);
       if (prev && prev !== hash) throw new Error(`rootfs: short hash collision on ${name}`);
       seen.set(name, hash);

@@ -8,6 +8,7 @@ import manifest from "virtual:vm-manifest";
 import { downloads, inServiceNamed, type MachineName, machines, v86Options } from "../vm.config.ts";
 import { ask, secret } from "./ask.ts";
 import { lay } from "./content.ts";
+import { prefetch } from "./prefetch.ts";
 import { pick, put } from "./drop.ts";
 import { Machine } from "./machine.ts";
 import { net, unwire as unwireNet } from "./net/index.ts";
@@ -147,6 +148,7 @@ async function resume(started: Machine, name: MachineName) {
   useMachine.setState({ phase: "running" });
   // What was published since the machine was built: its home catches up.
   void lay(started);
+  void prefetch(started);
 }
 
 start(params.has("workbench") && inServiceNamed("workbench") ? "workbench" : "home");

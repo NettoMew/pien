@@ -20,6 +20,7 @@ import { frontMatter, indexOf, readWriting } from "./lib/content.ts";
 import { cached } from "./lib/fetch.ts";
 import { editBuild } from "./lib/edit.ts";
 import { kernelBuild } from "./lib/kernel.ts";
+import { libraries } from "./lib/libraries.ts";
 import { info, size, step } from "./lib/log.ts";
 import { putHashed, VM, writeManifest } from "./lib/manifest.ts";
 import { RootFS } from "./lib/rootfs.ts";
@@ -182,6 +183,9 @@ for (const name of await readdir(blobDir)) {
 }
 
 const fsJson = JSON.stringify(json);
+// Each program's libraries, for the page to fetch together (src/prefetch.ts).
+const linked = libraries(rootfs);
+const librariesFile = await putHashed("libraries.json", Buffer.from(JSON.stringify(linked)));
 await writeManifest({
   hostname: config.hostname,
   arch: "i686",
@@ -190,7 +194,13 @@ await writeManifest({
   fish: release(repo.lookup("fish").version),
   // Exactly what went in: the workbench's disk is built against these.
   packages: Object.fromEntries(packages.map((pkg) => [pkg.name, pkg.version]).sort(([a], [b]) => a!.localeCompare(b!))),
-  files: { fsJson: await putHashed("fs.json", Buffer.from(fsJson)), bios: biosFile, vgaBios: vgaBiosFile, kernel: kernelFile },
+  files: {
+    fsJson: await putHashed("fs.json", Buffer.from(fsJson)),
+    bios: biosFile,
+    vgaBios: vgaBiosFile,
+    kernel: kernelFile,
+    libraries: librariesFile,
+  },
   content,
   // Neither the disk nor the snapshots match a new image; their builders add new ones.
   snapshots: {},
@@ -199,4 +209,5 @@ await writeManifest({
 info(
   `${blobs.size} blobs · ${size(bytes)} → ${size(stored)} compressed${stale ? ` · ${stale} stale removed` : ""}`,
   `fs.json ${size(fsJson.length)}`,
+  `libraries of ${Object.keys(linked).length} programs`,
 );
