@@ -11,6 +11,10 @@ ln -sf /proc/self/fd /dev/fd
 
 hostname -F /etc/hostname
 
+# On its first start fish has Python build completions out of man pages, of
+# which the image has none: the directory it would fill tells it not to.
+install -d -o guest -g guest /home/guest/.cache /home/guest/.cache/fish /home/guest/.cache/fish/generated_completions
+
 # The workbench's toolchain disk, when the machine has one (docs/workbench.md):
 # a read-only squashfs whose every top-level directory is laid over the one it
 # was installed into, with whatever is written there kept in memory.

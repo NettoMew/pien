@@ -39,7 +39,7 @@ guest@zutto-issho ~> workbench
 
 **挂载**。盘是 v86 的 IDE 硬盘（Intel PIIX3，内核里是 `ata_piix`），只能接在主盘位置（`hda`）。页面按 256 KB 的块经 HTTP Range 读，用到哪块才下载哪块。`/etc/rc` 把盘挂在 `/run/toolchain`，再用 overlayfs 把盘上的每个顶层目录（现在是 `/bin`、`/etc`、`/usr`）叠在 9p 上的同名目录上面，写入的东西留在内存里。工具装在它们被装进的那个系统上，路径一个不差。
 
-**快照**。v86 只存用到的内存页：784 MB 的机器存下来 36 MB，压缩后 9.5 MB。
+**快照**。v86 只存用到的内存页：784 MB 的机器存下来 31 MB，压缩后 7.7 MB。
 
 **Neovim**。`/usr/share/nvim/sysinit.vim` 总会被读到；用户没有自己的配置时，它载入 `/usr/share/nvim/workbench/` 里的 LazyVim。插件的提交固定在 `image/workbench/nvim/lazy-lock.json`（第一次构建时写下，之后按它恢复）。Mason 关掉了：语言服务器、格式化工具都在盘上，来自 apk、npm、go 和 pip。配色是 tokyonight 的 night，背景透明，透出显像管。复制经 OSC 52 到访客自己的剪贴板；终端从不把剪贴板交回来，所以粘贴用的是在这里复制的东西，外面的文字用终端的粘贴（Ctrl+Shift+V）。插件和解析器的目录属于访客，`:Lazy update`、`:TSInstall` 都能用，新东西留在内存里。
 
@@ -49,7 +49,7 @@ guest@zutto-issho ~> workbench
 
 | | |
 |---|---|
-| 盘 | 64 061 个路径，2.5 GB，squashfs 758 MB，按需读取 |
+| 盘 | squashfs 739 MB，按需读取 |
 | `gcc hello.c` | 6 秒 |
 | `g++ hello.cc` | 16 秒 |
 | `clang hello.c` | 16 秒 |
