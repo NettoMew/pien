@@ -68,7 +68,7 @@ adb、fastboot、dfu-util ──usbfs──▶ 客户机的内核 ──vhci-hcd
 - 只有 Chromium 系的浏览器有 WebUSB：电脑和 Android 上的 Chrome、Edge。
 - Windows 上，设备要用 WinUSB 驱动，浏览器才拿得到它：安卓手机装 Google USB Driver；别的设备可以用 [Zadig](https://zadig.akeo.ie/) 换成 WinUSB，换了之后这台电脑上原来认它的工具可能就不认了。Linux 上要有权限打开设备节点（udev 规则），和用 libusb 的程序一样；macOS、Android 不用管。
 - 电脑自己的程序正占着设备时（比如它自己的 adb server）借不到，要先在那边放开：`adb kill-server`。
-- 浏览器自己留着的类别借不到：HID（键盘、鼠标，还有 CMSIS-DAP v1 这样走 HID 的调试器）、大容量存储（U 盘、读卡器）、音视频、打印机、智能卡。U 盘不能借来 `dd` 镜像：浏览器不给，电脑自己的驱动也正占着它；能用的路是开发板的下载协议（上面这些工具），或者在电脑上烧。
+- 浏览器自己留着的类别借不到：HID（键盘、鼠标，还有 CMSIS-DAP v1 这样走 HID 的调试器）、大容量存储（U 盘、读卡器）、音视频、打印机、智能卡。U 盘不能借来 `dd` 镜像：浏览器不给，电脑自己的驱动也正占着它；能用的路是开发板的下载协议（上面这些工具），或者用 `take` 把镜像存到电脑上，在那里烧（[docs/files.md](files.md)）。
 - 联发科的 boot ROM 是个 CDC ACM 串口设备：Linux 上电脑自己的 `cdc_acm` 驱动会先占住它，Windows 上要换成 WinUSB。
 - 不做等时传输。USB 复位传不到真设备，Linux 自己的 USB/IP 也是这样，复位只在客户机这一侧；靠复位进 bootloader 的工具，要设备自己 detach，DFU 设备大多会。
 

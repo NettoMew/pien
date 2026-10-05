@@ -20,5 +20,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["vite.config.ts", "vm.config.ts", "image/image.config.ts", "scripts"]
+  "include": ["vite.config.ts", "vm.config.ts", "image/image.config.ts", "scripts", "src/pickers.d.ts"]
 }

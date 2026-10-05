@@ -7,6 +7,7 @@ import wasm from "v86/build/v86.wasm?url";
 import manifest from "virtual:vm-manifest";
 import { downloads, inServiceNamed, type MachineName, machines, v86Options } from "../vm.config.ts";
 import { ask, secret } from "./ask.ts";
+import { topics } from "./topics.ts";
 import { lay } from "./content.ts";
 import { prefetch } from "./prefetch.ts";
 import { pick, put } from "./drop.ts";
@@ -41,7 +42,7 @@ term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
   if (verb === "net" && machine) void net(rest[0] ?? "", machine);
-  if (verb === "ask" && machine) void ask(rest, machine);
+  if (verb === "ask" && machine) void ask(rest, machine, topics);
   if (verb === "usb" && machine) void usb(rest[0] ?? "", machine, rest[1]);
   if (verb === "serial" && machine) void serial(rest[0] ?? "", machine, rest[1]);
   if (verb === "ble" && machine) void ble(rest[0] ?? "", machine, rest[1]);

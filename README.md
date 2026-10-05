@@ -18,6 +18,7 @@ npm run dev            # http://localhost:5173
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
 | `npm run check:serial` | 给机器插几根假的串口线：一根 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍；一块停在 U-Boot `loady` 的板子，`sb` 往里传文件；一个蓝牙串口，走远再回来（见 [docs/serial.md](docs/serial.md)） |
 | `npm run check:ble` | 给机器几台假的蓝牙 LE 设备：Nordic UART、HM-10、自定的服务，经 `/dev/ttyBLE0` 往返字节，走远再回来（见 [docs/serial.md](docs/serial.md)） |
+| `npm run check:files` | 把文件从机器里 `take` 出来：存成它本身、打成 zip、ZIP64、手机上的下载，存下来的再拖回去让 Python 验 CRC（见 [docs/files.md](docs/files.md)） |
 | `npm run check:usb` | 给机器插几台假 USB 设备，连描述符都有，客户机的内核经 USB/IP 枚举它们：一台手机给 adb 和 fastboot，一台 DFU 设备给 dfu-util（见 [docs/usb.md](docs/usb.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
@@ -45,7 +46,7 @@ npm run dev            # http://localhost:5173
 
 **快照**（`scripts/build-state.ts`）。在 Node 里冷启动一次，先用一个一次性的会话把常用的东西预热进页缓存，再开一个全新会话、从第一个字节起录下终端输出。等它停在提示符时，整机存成快照，录下的输出另存。访客恢复快照后，页面回放这段输出，fish 已经在提示符等着了。
 
-**页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再滚过一屏开机日志。日志是编的（`boot-log.ts`），节奏却是真的：每一行代表要下载的东西里的一份，下完日志也走完，最后一项服务等机器真正就绪才打上 `ok`；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标），以及客户机要用到浏览器授权时浮出的那枚键（`Offer.tsx`、`src/gesture.ts`：手机只在点按的那一刻允许弹窗和选文件，命令传到页面时已经晚了，点一下这枚键就补上）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制。
+**页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再滚过一屏开机日志。日志是编的（`boot-log.ts`），节奏却是真的：每一行代表要下载的东西里的一份，下完日志也走完，最后一项服务等机器真正就绪才打上 `ok`；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标），以及客户机要用到浏览器授权时浮出的那枚键（`Offer.tsx`、`src/gesture.ts`：手机只在点按的那一刻允许弹窗和选文件，命令传到页面时已经晚了，点一下这枚键就补上）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制；反过来，`take` 把客户机里的文件存到访客的电脑上，一个文件是它本身，一个目录或几样东西打成 zip（[docs/files.md](docs/files.md)）。
 
 **联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层加密，前面的 TLS 终结者看不到帧。本站的中继只认站长的登录；谁都可以搭自己的中继（`relay key` 给它一把密钥），用 `net relay <地址>` 指过去。详见 [docs/relay.md](docs/relay.md)。
 
@@ -90,7 +91,7 @@ npm run dev            # http://localhost:5173
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)，登录见 [docs/login.md](docs/login.md)，写作见 [docs/writing.md](docs/writing.md)；串口见 [docs/serial.md](docs/serial.md)，USB 设备见 [docs/usb.md](docs/usb.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)，登录见 [docs/login.md](docs/login.md)，写作见 [docs/writing.md](docs/writing.md)；串口见 [docs/serial.md](docs/serial.md)，USB 设备见 [docs/usb.md](docs/usb.md)，文件进出见 [docs/files.md](docs/files.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
 
 ## 踩过的坑
 

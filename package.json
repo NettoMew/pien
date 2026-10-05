@@ -60,6 +60,7 @@
     "check:usb": "node scripts/check-usb.ts",
     "check:serial": "node scripts/check-serial.ts",
     "check:ble": "node scripts/check-ble.ts",
+    "check:files": "node scripts/check-files.ts",
     "check:login": "node scripts/check-login.ts",
     "check:writing": "node scripts/check-writing.ts",
     "shell": "node scripts/shell.ts",
