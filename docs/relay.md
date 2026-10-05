@@ -1,11 +1,12 @@
 # 中继（`net on`）
 
-访客在终端里敲 `net on`，这台虚拟机就拿到一段私有的网络，经中继出门：`ip a`、`curl`、`git`、真实的 `ping`、DNS 都能用。本站的中继只给站长用：先登录（[login.md](login.md)）。谁都可以搭一个自己的中继，用 `net relay <地址>` 指过去。
+访客在终端里敲 `net on`，这台虚拟机就拿到一段私有的网络，IPv4 和 IPv6 都有，经中继出门：`ip a`、`curl`、`git`、真实的 `ping`、DNS 都能用。本站的中继只给站长用：先登录（[login.md](login.md)）。谁都可以搭一个自己的中继，用 `net relay <地址>` 指过去。
 
 ```
 v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层加密══▶ Caddy ──▶ relay（relay/）──▶ 互联网
                                                                   每条连接一段私有网段：
                                                                   10.0.2.15 访客 · 10.0.2.2 网关 · 10.0.2.3 DNS
+                                                                  fdca:c697:4c23::/64 访客自己生成地址 · ::2 网关
 ```
 
 （另一条路 Cloudflare WARP 已封存，见 [warp.md](warp.md)。）
@@ -17,13 +18,14 @@ v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层
 | | |
 |---|---|
 | 线路格式 | 一条二进制消息就是一个以太网帧，和 v86 的 wsproxy 一样，只是外面多一层加密 |
-| L2 | smoltcp 回 ARP，学访客的 MAC；网关 MAC 用 QEMU 的 `52:55:0a:00:02:02` |
+| L2 | smoltcp 回 ARP 和邻居请求，学访客的 MAC；网关 MAC 用 QEMU 的 `52:55:0a:00:02:02` |
+| IPv6 | 和 IPv4 并排的第二段网：唯一本地前缀 `fdca:c697:4c23::/64`（RFC 4193，全局 ID 随机抽过一次就写死，和 10.0.2.0/24 一样每个会话都相同）。网关从 `fe80::2` 发路由通告：会话开始时、之后每 10 分钟、访客来要时；访客照 SLAAC 用自己的 MAC 生成地址，默认路由指向网关。下面各行的做法两个族一样，IPv6 的包出门也走 IPv6。DNS 仍是 10.0.2.3，AAAA 记录照常返回。源地址是私有前缀，按 RFC 6724 的默认规则，目标两个族都有时访客先用 IPv4；只有 IPv6 的目标，或者 `curl -6` 这样指定，才走 IPv6 |
 | TCP | smoltcp 扮演网关一端。**先真的连上目标，再回访客的 SYN**：对方拒绝就回 RST（curl 报 Connection refused），连不上就回 ICMP 主机不可达，和真实网络一样 |
 | UDP | 绕过 smoltcp：每个（访客端口，目的地）一个真实的 UDP socket，闲置 60 秒回收；对方端口关着时，访客收到 ICMP「端口不可达」 |
-| ICMP | ping 走 Linux 的非特权 ping socket（`ping_group_range`；容器里默认对所有组开放）；回给访客的 echo reply 由中继构造 |
-| TTL（traceroute、mtr） | 中继按路由器的规矩处理访客的 TTL：TTL 用尽的包由网关回「超时」（第 1 跳）；其余按剩下的 TTL 发到真实网络，沿途路由器回的「超时」「不可达」经 Linux 的 `IP_RECVERR` 错误队列收下，原样转给访客，引用访客自己的原始包，所以 mtr 和 traceroute 认得出自己的探测。ping 和 UDP 两种探测都支持 |
-| DNS | 发往 10.0.2.3:53 的查询由中继解析；上游默认走 DoT（Cloudflare），也可以配 Quad9、Google、系统解析或某个地址；可以配静态 hosts |
-| 策略 | 默认只放行公网：私网、回环、链路本地、CGNAT、文档段、组播、保留地址都拦下（回 ICMP「主机被禁止」）。检查的是**真正要连的地址**，所以 DNS 指向内网也没用。端口白名单、黑名单（默认拦 25）、别名（把某个访客地址映射到真实地址，不受检查） |
+| ICMP | ping 走 Linux 的非特权 ping socket（`ping_group_range`，ICMPv6 也归它管；容器里默认对所有组开放）；回给访客的 echo reply 由中继构造 |
+| TTL（traceroute、mtr） | 中继按路由器的规矩处理访客的 TTL（IPv6 叫跳数限制）：用尽的包由网关回「超时」（第 1 跳）；其余按剩下的 TTL 发到真实网络，沿途路由器回的「超时」「不可达」「包太大」经 Linux 的 `IP_RECVERR`、`IPV6_RECVERR` 错误队列收下，原样转给访客，引用访客自己的原始包（IPv4 引用包头和其后 8 字节，IPv6 引用到整个错误包不超过 1280 字节为止），所以 mtr 和 traceroute 认得出自己的探测。ping 和 UDP 两种探测都支持 |
+| DNS | 发往 10.0.2.3:53 的查询由中继解析；上游默认走 DoT（Cloudflare），也可以配 Quad9、Google、系统解析或某个地址；可以配静态 hosts（IPv4 地址回 A 记录，IPv6 地址回 AAAA） |
+| 策略 | 默认只放行公网：IPv4 的私网、回环、链路本地、CGNAT、文档段、组播、保留地址都拦下；IPv6 只放行全球单播 2000::/3，其中的文档段、2001::/23（IETF 协议用途，Teredo 在内）、6to4（2002::/16，里面能藏任何 IPv4 地址）也拦下。拦下时回 ICMP「被禁止」。检查的是**真正要连的地址**，所以 DNS 指向内网也没用。端口白名单、黑名单（默认拦 25）、别名（把某个访客地址映射到真实地址，不受检查；两个族都行，也可以跨族，这时网络回的错误报告访客收不到） |
 | 出口 | TCP 直连，或者经 SOCKS5（比如本机的 Mayami）：代理说拒绝，访客照样收到 RST；UDP 和 ICMP 直连 |
 | 限额 | 会话数（默认 4）、每会话 TCP 连接数（256）、每会话限速（两个方向各一个令牌桶，带一秒的突发）、每会话流量额度、闲置超时（30 分钟）。额度用完以关闭码 4001 结束，闲置以 4002 结束，访客看到对应的中文说明 |
 | 记录 | 只有计数：会话数、拒绝次数、上下行字节、连接数。**不记录任何目的地址** |
@@ -61,7 +63,7 @@ session_key = "…"               # 或者本站的会话密钥：认站长的�
 
 [dns]
 upstream = "cloudflare-tls"     # quad9-tls、google-tls、system，或一个地址
-hosts = { "nas.home" = "192.168.1.10" }
+hosts = { "nas.home" = "192.168.1.10", "printer.home" = "fd00::20" }
 
 [egress]
 socks5 = "127.0.0.1:7890"       # TCP 经 SOCKS5；默认直连
@@ -71,7 +73,7 @@ udp = true
 allow_private = false
 allow_ports = []                # 空：所有端口
 deny_ports = [25]
-aliases = { "10.0.2.4" = "192.168.1.10" }
+aliases = { "10.0.2.4" = "192.168.1.10" }   # IPv6 地址也行
 
 [limits]
 sessions = 4
@@ -92,6 +94,7 @@ idle = 1800                     # 秒
 ## 客户机
 
 - `net on` 时，hostd 收到 `net up relay 10.0.2.15/24 10.0.2.2 10.0.2.3 1500`，配好 eth0、路由和 `/etc/resolv.conf`；没联网时 eth0 没有地址，程序会立刻报 Network unreachable，不会卡住。
+- IPv6 不用页面传话：hostd 先把 eth0 关掉再打开，内核一起来就向网关要路由通告，照着生成地址、装上默认路由；换到不发通告的中继时，上一个中继给的地址也随网卡关掉一并清掉。`/etc/rc` 关了 eth0 上的重复地址检测（这条链路上只有访客和网关），地址立刻能用，省掉每次联网一秒的等待。内核因此多了 IPv6，bzImage 大了 160 KB。`net on` 和 `net` 把两个地址都列出来。
 - `net on` 走本站中继却没登录时，先跑一遍 `net login`，登录完自动重试。
 - `net relay <地址>` 换成自己的中继，第一次会问它的密钥（`read -s`，手机上有粘贴键）；`net relay reset` 换回本站的。
 - 访客用户的 PATH 加了 `/sbin`，`ip a`、`ip route` 直接能敲。
@@ -112,9 +115,10 @@ idle = 1800                     # 秒
 ## 测试
 
 - `cargo test --manifest-path relay/Cargo.toml`（CI 在跑）：
-  - 单元测试：报文构造、加密通道（错误密钥、重放、乱序）、配置、策略；
-  - 端到端（11 项）：smoltcp 扮演一台有以太网和 ARP 的访客，经真实的 WebSocket 和加密通道连进进程内的中继，再经别名访问本机的测试服务：TCP 双向和半关闭、被拒（SYN-SENT 时就收到 RST）、被策略拦下（ICMP）、UDP、UDP 端口不可达、DNS、ping 网关、错误密钥被拒、经 SOCKS5 出口（连通和被拒）、限速、额度、闲置；
-  - Linux 上多一项 `ping_goes_out`：经 ping socket 真的发出 ICMP；另有一项需要外网、默认跳过的 `the_next_hop_is_out_there`（`--ignored`）：TTL 2 到 4 的 ping 从真实路由器收到「超时」。在 v2in0 的容器里全部通过（第 2 跳是 Docker 网桥，第 3 跳是上游路由器）。
+  - 单元测试：两个族的报文构造（校验和、各族自己的 ICMP 类型和代码、IPv6 错误报文引用到 1280 字节为止、路由通告）、加密通道（错误密钥、重放、乱序）、配置、策略；
+  - 端到端（20 项）：smoltcp 扮演一台有以太网、ARP 和邻居发现的访客，像 Linux 一样从网关的通告生成 IPv6 地址，经真实的 WebSocket 和加密通道连进进程内的中继，再经别名访问本机的测试服务（192.0.2.10 → 127.0.0.1，2001:db8::10 → ::1）。两个族各测一遍：TCP 双向和半关闭、被拒（SYN-SENT 时就收到 RST）和被策略拦下（ICMP）、UDP、UDP 端口不可达、ping 网关、最后一跳在网关；另有生成的地址、DNS 的 A 和 AAAA、错误密钥被拒、登录、经 SOCKS5 出口（连通和被拒）、限速、额度、闲置；
+  - Linux 上两个族各多一项 `ping_goes_out`：经 ping socket 真的发出去；另有一项需要外网、默认跳过的 `the_next_hop_is_out_there`（`--ignored`）：TTL 2 到 4 的 ping 从真实路由器收到「超时」。在 v2in0 的容器里全部通过（第 2 跳是 Docker 网桥，第 3 跳是上游路由器）。
+- `npm run check:login` 里，真的客户机联网后拿到 IPv6 地址、ping 得通网关，再经中继的别名用 IPv6 连到本机的 press。
 
 ## 本地开发
 
