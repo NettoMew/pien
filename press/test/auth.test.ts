@@ -25,7 +25,7 @@ async function press() {
     listen: { host: "127.0.0.1", port: 0 },
     data,
     sessionKey: randomBytes(32),
-    github: { clientId: "client", clientSecret: "secret" },
+    github: { clientId: "client", clientSecret: "secret", url: "https://github.com", api: "https://api.github.com" },
   };
   const account = new Store<Account>(join(data, "account.json"), emptyAccount);
   const world = { clock: 1_790_000_000, who: { id: 42, login: "owner-on-github" }, revoked: [] as string[] };
@@ -149,7 +149,8 @@ test("GitHub: linked by a login, then a way in for that account alone", async ()
     const cookie = away.headers.getSetCookie()[0]!.split(";")[0]!;
     const back = await call("GET", `/api/auth/github/callback?code=${code}&state=${state}`, { cookie });
     const page = await back.text();
-    return JSON.parse(/postMessage\((.*)\); setTimeout/.exec(page)![1]!) as GitHubResult;
+    assert.match(page, /localStorage\.setItem\("github", /, "it leaves its word for a page that missed it");
+    return JSON.parse(/const word = (.*);/.exec(page)![1]!) as GitHubResult;
   };
 
   assert.deepEqual(await trip("/api/auth/github"), { error: "owner-on-github on GitHub is not the owner of this site." });

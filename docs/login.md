@@ -5,7 +5,7 @@
 ```
 客户机 net login ──OSC 7337 ask──▶ 页面（src/account/）──/api/──▶ press（press/）
                                     │ 通行密钥：浏览器自己的对话框
-                                    │ GitHub：弹出窗口，结果经 BroadcastChannel 回来
+                                    │ GitHub：另开一个窗口，结果经 BroadcastChannel 回来
                                     ▼
                          登录 = token + 通道密钥，存在这个浏览器里
 页面 ──"GHR2" ‖ … ‖ token──▶ relay：自己验 token、派生通道密钥，不问任何人
@@ -16,7 +16,7 @@
 | | |
 |---|---|
 | `net login` | 用通行密钥登录（浏览器弹出它自己的对话框） |
-| `net login github` | 用 GitHub 登录：弹出一个窗口，页面和里面的机器都不动 |
+| `net login github` | 用 GitHub 登录：另开一个窗口（电脑上是弹窗，手机上是新标签页），页面和里面的机器都不动 |
 | `net logout` | 忘掉这个浏览器里的登录 |
 | `net passkey` | 列出通行密钥，以及关联的 GitHub 账号 |
 | `net passkey add [名字]` | 在这台设备上新建一个通行密钥；名字默认是「系统 · 浏览器」 |
@@ -37,6 +37,12 @@ docker exec homepage-press press enroll
 打印一个 16 位的码（`XXXX-XXXX-XXXX-XXXX`，字母表去掉了容易看错的 0/O、1/I/L），15 分钟内有效，用一次就作废，猜错 5 次也作废。在客户机里 `net passkey add`，它会问这个码，大小写和横线都无所谓。加好以后直接就是登录状态。
 
 以后在新设备上：`net login github`，再 `net passkey add`。
+
+## 手机上：点一下屏幕上的键（`src/gesture.ts`）
+
+浏览器只在访客点按或按键的那一刻允许弹窗、选文件、选设备、调通行密钥。在机器里敲命令回车后，请求要先经过终端和客户机再回到页面：桌面浏览器还把那一下按键算作访客的操作，手机不算，直接拦掉。所以这类动作先试着直接做；浏览器拒绝了，屏幕下方就浮出一枚键帽，比如「Continue with GitHub」，点一下（或者按 Enter）就接着做，Esc 或 ✕ 取消。桌面上几乎见不到它。`drop`、`serial`、`adb`/`fastboot` 选设备，以及通行密钥，都走同一个机制。
+
+GitHub 在手机上开在新标签页里。回调页除了经 BroadcastChannel 告诉页面，还把同样的结果留在 localStorage 里（十分钟内有效）：原来的标签页被冻结了，切回来时自己去看；被系统回收了，重新加载后第一次问到登录时接过来。
 
 ## 登录长什么样（`press/src/tokens.ts`，`relay/src/token.rs`）
 
@@ -74,9 +80,9 @@ ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
 | `POST /api/auth/passkey/register` | `{ response, name, code? }`；用码注册的同时登录 |
 | `GET /api/auth/passkeys` | 列表和 GitHub 账号 |
 | `DELETE /api/auth/passkeys/:id` | |
-| `GET /api/auth/github` | 弹出窗口的第一页：去 GitHub 登录 |
+| `GET /api/auth/github` | GitHub 窗口的第一页：去 GitHub 登录 |
 | `POST /api/auth/github/link` | 已登录时要一个关联用的地址，窗口再去那里 |
-| `GET /api/auth/github/callback` | 从 GitHub 回来：结果经 BroadcastChannel 告诉页面，窗口自己关掉 |
+| `GET /api/auth/github/callback` | 从 GitHub 回来：结果经 BroadcastChannel 告诉页面，也留在 localStorage 里，窗口自己关掉 |
 
 - 通行密钥：rpId 是站点的主机名 `arc.moe`，子域上的页面也能用同一批通行密钥，只要在 `PRESS_ORIGINS` 里列出来。可发现凭据，登录时不用输用户名。
 - GitHub：不要任何权限（no scopes），只为知道「是谁」；拿到身份后立刻把 GitHub 的 token 还回去（DELETE）。来回一趟用 HttpOnly cookie 绑在发起它的浏览器上，所以别人点不进你的登录。

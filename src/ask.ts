@@ -10,15 +10,9 @@
 // so text shown in the terminal, a file being read say, cannot ask anything.
 
 import type { Machine } from "./machine.ts";
+import { No } from "./no.ts";
 
-/** A question answered with no: what to tell the guest, and the status its command returns. */
-export class No extends Error {
-  readonly status: number;
-  constructor(message: string, status = 1) {
-    super(message);
-    this.status = status;
-  }
-}
+export { No };
 
 /** A topic's module answers its questions: lines to print, or a No. */
 export type Answers = (words: string[], machine: Machine) => Promise<string[] | void>;

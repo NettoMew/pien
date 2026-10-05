@@ -14,8 +14,11 @@
 //   POST   /api/auth/github/link                 where to send a popup that links an account
 //   GET    /api/auth/github/callback             back from GitHub: tells the page, closes
 //
-// GitHub runs in a popup, so the page, and the machine running in it, stay
-// put; its last page tells the site's other pages over a BroadcastChannel.
+// GitHub runs in a window of its own, a popup on a computer and a tab on a
+// phone, so the page, and the machine running in it, stay put. Its last page
+// tells the site's other pages over a BroadcastChannel, and leaves the same
+// word in localStorage for a page that was frozen meanwhile, or thrown away
+// and loaded anew (src/account/login.ts).
 
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -65,8 +68,10 @@ export interface World {
 const PATIENCE = { challenge: 300, code: 15 * 60, github: 600 };
 const GUESSES = 5;
 const STATE_COOKIE = "press-github";
-/** Where the GitHub popup reports back (src/account/github.ts listens). */
+/** Where the GitHub window reports back (src/account/github.ts listens). */
 const CHANNEL = "press-github";
+/** Where it also leaves its word, in the site's localStorage (src/account/login.ts). */
+const LEFT = "github";
 
 /** Things to remember for a while, each taken once. */
 class Pending<T> {
@@ -284,7 +289,7 @@ export function auth(config: Config, account: Store<Account>, world: World) {
         if (!purpose) throw new Refusal(400, "That link is used or too old. Try again.");
         const state = random(24);
         trips.add(state, purpose, PATIENCE.github);
-        const to = new URL("https://github.com/login/oauth/authorize");
+        const to = new URL("/login/oauth/authorize", github.url);
         to.search = new URLSearchParams({
           client_id: github.clientId,
           redirect_uri: `${config.site}/api/auth/github/callback`,
@@ -344,8 +349,8 @@ export type GitHubResult = { login: Login } | { linked: string } | { error: stri
 
 /** The GitHub account behind an OAuth `code`. The token that tells is given back at once. */
 async function whoOnGitHub(config: Config, world: World, code: string): Promise<{ id: number; login: string }> {
-  const { clientId, clientSecret } = config.github!;
-  const exchanged = await world.fetch("https://github.com/login/oauth/access_token", {
+  const { clientId, clientSecret, url, api: apiUrl } = config.github!;
+  const exchanged = await world.fetch(new URL("/login/oauth/access_token", url), {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
     body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: `${config.site}/api/auth/github/callback` }),
@@ -354,13 +359,13 @@ async function whoOnGitHub(config: Config, world: World, code: string): Promise<
   if (!token) throw new Error(`no token (HTTP ${exchanged.status})`);
   const api = { accept: "application/vnd.github+json", "user-agent": "press", "x-github-api-version": "2022-11-28" };
   try {
-    const answer = await world.fetch("https://api.github.com/user", { headers: { ...api, authorization: `Bearer ${token}` } });
+    const answer = await world.fetch(new URL("/user", apiUrl), { headers: { ...api, authorization: `Bearer ${token}` } });
     const { id, login } = (await answer.json()) as { id?: number; login?: string };
     if (typeof id !== "number" || !login) throw new Error(`no user (HTTP ${answer.status})`);
     return { id, login };
   } finally {
     await world
-      .fetch(`https://api.github.com/applications/${clientId}/token`, {
+      .fetch(new URL(`/applications/${clientId}/token`, apiUrl), {
         method: "DELETE",
         headers: { ...api, authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}` },
         body: JSON.stringify({ access_token: token }),
@@ -369,16 +374,27 @@ async function whoOnGitHub(config: Config, world: World, code: string): Promise<
   }
 }
 
-/** The popup's last page: tells the site's pages how it went, then closes. */
+/**
+ * The GitHub window's last page: tells the site's pages how it went, leaves
+ * the same word where a page that missed it finds it (LEFT, read by
+ * src/account/login.ts), then closes. A window it may not close (one the
+ * visitor opened, not the page) offers the way back instead.
+ */
 function popupEnd(message: GitHubResult): Response {
   const data = JSON.stringify(message).replace(/</g, "\\u003c");
-  const said = "error" in message ? message.error : "Done. This window closes itself.";
+  const said = "error" in message ? message.error : "Done: back to the terminal.";
   const html = `<!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>GitHub</title>
-<p style="font: 15px/1.6 ui-monospace, monospace; margin: 2rem">${said.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)}</p>
-<script>new BroadcastChannel(${JSON.stringify(CHANNEL)}).postMessage(${data}); setTimeout(close, ${"error" in message ? 4000 : 300});</script>
+<p style="font: 15px/1.6 ui-monospace, monospace; margin: 2rem">${said.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)}<br><a href="/" style="color: #7dcfff">Back to the terminal</a></p>
+<script>
+const word = ${data};
+try { localStorage.setItem(${JSON.stringify(LEFT)}, JSON.stringify({ ...word, at: Date.now() })); } catch {}
+new BroadcastChannel(${JSON.stringify(CHANNEL)}).postMessage(word);
+setTimeout(close, ${"error" in message ? 4000 : 300});
+</script>
 `;
   const headers = new Headers({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   headers.append("set-cookie", `${STATE_COOKIE}=; Path=/api/auth/github; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);

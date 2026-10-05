@@ -42,8 +42,6 @@ function __usb_why --argument-names tool why
             set text 'This browser has no WebUSB: Chrome and Edge have it, on a computer or on Android.'
         case cancelled
             set text 'No phone was chosen.'
-        case activation
-            set text 'The browser wants a key press before it lists devices: run it again.'
         case mode
             if test $tool = adb
                 set text 'That phone is not offering adb: turn on USB debugging in its developer options.'

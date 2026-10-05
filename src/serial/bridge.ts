@@ -5,6 +5,8 @@
 // they happen, so a board's auto-reset into its bootloader works. Bytes go
 // both ways, and CTS, DSR, DCD and RI come back to the guest.
 
+import { Cable } from "lucide-react";
+import { gesture } from "../gesture.ts";
 import type { Machine, ModemStatus, SerialLine } from "../machine.ts";
 
 /** The UART's clock over 16, as /etc/rc sets it: the driver divides it down to the speed it wants. */
@@ -194,10 +196,10 @@ export async function open(machine: Machine) {
   let port = (await serial.getPorts())[0];
   if (!port) {
     try {
-      port = await serial.requestPort();
-    } catch (error) {
-      // The browser lists ports only right after a key press or a tap.
-      return down(machine, named(error, "SecurityError") ? "activation" : "cancelled");
+      // The browser lists ports only as the visitor touches the page.
+      port = await gesture("Choose a serial port", Cable, () => serial.requestPort());
+    } catch {
+      return down(machine, "cancelled");
     }
   }
   await join(port, machine);

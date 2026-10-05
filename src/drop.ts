@@ -9,7 +9,9 @@
 //   drop <n>      the files are there
 //   drop none     the visitor chose none
 
+import { Files } from "lucide-react";
 import { directory, lend, plain } from "./elsewhere.ts";
+import { gesture, touched } from "./gesture.ts";
 import type { Machine } from "./machine.ts";
 
 let batches = 0;
@@ -31,13 +33,24 @@ export function put(chosen: File[], machine: Machine): void {
 }
 
 /**
- * The guest's `drop`: the browser's file chooser. The key press that ran the
- * command is what lets the page open it; without one, nothing was chosen.
+ * The guest's `drop`: the browser's file chooser, opened by the key press
+ * that ran the command, or else by a tap on the key the screen offers.
  */
 export function pick(machine: Machine): void {
-  if (navigator.userActivation && !navigator.userActivation.isActive) return machine.control("drop none");
+  gesture("Choose files", Files, choose).then(
+    (files) => put(files, machine),
+    () => machine.control("drop none"),
+  );
+}
+
+/** The files the visitor chooses; none if they cancel. */
+function choose(): Promise<File[]> {
+  // Without a touch the chooser stays shut, and nothing says so.
+  touched();
+  const { promise, resolve } = Promise.withResolvers<File[]>();
   const input = Object.assign(document.createElement("input"), { type: "file", multiple: true });
-  input.addEventListener("change", () => put([...(input.files ?? [])], machine));
-  input.addEventListener("cancel", () => machine.control("drop none"));
+  input.addEventListener("change", () => resolve([...(input.files ?? [])]));
+  input.addEventListener("cancel", () => resolve([]));
   input.click();
+  return promise;
 }

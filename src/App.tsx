@@ -3,6 +3,7 @@ import { Suspense, useState } from "react";
 import type { MachineName } from "../vm.config.ts";
 import { Boot } from "./components/Boot.tsx";
 import { Drop } from "./components/Drop.tsx";
+import { Offer } from "./components/Offer.tsx";
 import { Keys } from "./components/Keys.tsx";
 import { Screen } from "./components/Screen.tsx";
 import { Terminal } from "./components/Terminal.tsx";
@@ -56,6 +57,7 @@ export default function App() {
             {booted !== machine && <Boot key={machine} onDone={() => setBooted(machine)} />}
           </AnimatePresence>
           <Drop />
+          <Offer />
         </Screen>
         <Keys />
       </div>

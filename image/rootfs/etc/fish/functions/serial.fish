@@ -51,8 +51,6 @@ function __serial_why --argument-names why
             set text 'This browser has no Web Serial: Chrome and Edge have it, on a computer.'
         case cancelled
             set text 'No port was chosen.'
-        case activation
-            set text 'The browser wants a key press before it lists ports: run it again.'
         case busy
             set text 'Something else on this computer has the port open: close it there, then try again.'
         case gone

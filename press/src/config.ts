@@ -3,13 +3,15 @@
 //   PRESS_SITE                 where the site lives, https://arc.moe: passkeys
 //                              belong to its host, GitHub comes back to it
 //   PRESS_ORIGINS              other origins whose pages may log in too,
-//                              comma-separated: https://test-demo.arc.moe
+//                              comma-separated: pages on the site's subdomains
 //   PRESS_OWNER                the name passkeys carry in password managers
 //   PRESS_LISTEN               host:port, by default 127.0.0.1:8096
 //   PRESS_DATA                 press's own directory: passkeys, the GitHub link
 //   PRESS_SESSION_KEY_FILE     64 hex digits, the relay's session_key too
 //   PRESS_GITHUB_CLIENT_ID     the GitHub OAuth app; without, no GitHub login
 //   PRESS_GITHUB_SECRET_FILE   its client secret
+//   PRESS_GITHUB_URL           GitHub itself, https://github.com, and its API,
+//   PRESS_GITHUB_API           https://api.github.com: a stand-in's, for tests
 //   PRESS_CONTENT              the published writing, a git repository;
 //                              without, no writing from the machine
 //   PRESS_PUBLIC               where press renders what nginx serves
@@ -29,7 +31,7 @@ export interface Config {
   listen: { host: string; port: number };
   data: string;
   sessionKey: Uint8Array;
-  github?: { clientId: string; clientSecret: string };
+  github?: { clientId: string; clientSecret: string; url: string; api: string };
   writing?: Places;
 }
 
@@ -50,7 +52,14 @@ export async function configure(env: NodeJS.ProcessEnv = process.env): Promise<C
     listen: { host, port: Number(port) },
     data: need("PRESS_DATA"),
     sessionKey,
-    ...(clientId && { github: { clientId, clientSecret: await secret(need("PRESS_GITHUB_SECRET_FILE")) } }),
+    ...(clientId && {
+      github: {
+        clientId,
+        clientSecret: await secret(need("PRESS_GITHUB_SECRET_FILE")),
+        url: env.PRESS_GITHUB_URL || "https://github.com",
+        api: env.PRESS_GITHUB_API || "https://api.github.com",
+      },
+    }),
     ...(env.PRESS_CONTENT && {
       writing: {
         store: env.PRESS_CONTENT,

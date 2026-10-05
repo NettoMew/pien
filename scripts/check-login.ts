@@ -10,15 +10,16 @@
 // The relay is built first if need be (cargo, relay/).
 
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { Checks } from "./lib/guest.ts";
 import { step } from "./lib/log.ts";
-import { RELAY, site } from "./lib/site.ts";
+import { GITHUB_USER, RELAY, SITE, site } from "./lib/site.ts";
 
 const checks = new Checks();
 const check = checks.check.bind(checks);
 
-step("the relay, press and the site");
-const { run, type, enrolmentCode, ownKey, close } = await site({ relay: true });
+step("the relay, press, a stand-in GitHub and the site");
+const { run, type, enrolmentCode, ownKey, phone, close } = await site({ relay: true, github: true });
 
 step("the first passkey, with a code from the server");
 let said = await run("net passkey add laptop", ["Code:"]);
@@ -65,6 +66,35 @@ check("… and forgotten", said.includes("Your relay needs its key"), said.slice
 said = await run("net relay reset", ["from now on"]);
 said = await run("net", ["net on · net off"]);
 check("back to this site's relay", said.includes("Relay: this site's"));
+
+step("GitHub, from a computer, where a window opens at once");
+said = await run("net github", ["logs in here now", "Cancelled", "blocked", "No word"], 60e3);
+check("links the account", said.includes(`${GITHUB_USER} on GitHub logs in here now`), said.slice(-120));
+await run("net logout", ["Logged out."]);
+said = await run("net login github", ["Logged in", "Cancelled", "blocked", "not the owner"], 60e3);
+check("logs in with it", /Logged in, until \d{4}-\d\d-\d\d/.test(said), said.slice(-120));
+
+step("GitHub on a phone, where a window opens only on a tap");
+const handset = await phone();
+await handset.run("net login github", ["Log in with GitHub"]);
+const offered = handset.page.getByRole("button", { name: "Continue with GitHub" });
+await offered.waitFor({ timeout: 15e3 });
+check("the screen offers a key", await offered.isVisible());
+await handset.page.screenshot({ path: join(import.meta.dirname, "../.cache/smoke/offer-phone.png") });
+await offered.tap();
+said = await handset.wait(["Logged in", "Cancelled", "blocked"], 60e3);
+check("a tap on it logs in", /Logged in, until \d{4}-\d\d-\d\d/.test(said), said.slice(-120));
+
+step("a phone page thrown away while at GitHub");
+await handset.run("net logout", ["Logged out."]);
+// GitHub in a tab of its own; the page that would have waited for it is gone.
+const away = await handset.page.context().newPage();
+await away.goto(`${SITE}/api/auth/github`);
+await away.waitForURL(/\/api\/auth\/github\/callback/);
+await away.close();
+await handset.open();
+said = await handset.run("net", ["net on · net off"]);
+check("the page loaded anew finds the login left for it", said.includes("Logged in until"), said.slice(-120));
 
 await close();
 checks.done();

@@ -1,6 +1,6 @@
 // Passkeys, through the browser's own dialog and press. The dialog wants the
-// page to have been touched a moment before; the key press that ran the
-// guest's command is that touch.
+// page to have been touched a moment before: the key press that ran the
+// guest's command, or else a tap on the key the screen offers (gesture.ts).
 
 import {
   type PublicKeyCredentialCreationOptionsJSON,
@@ -9,7 +9,9 @@ import {
   startRegistration,
   WebAuthnError,
 } from "@simplewebauthn/browser";
+import { KeyRound } from "lucide-react";
 import { No } from "../ask.ts";
+import { gesture, NeedsTouch } from "../gesture.ts";
 import { api } from "./api.ts";
 import { keep, type Login } from "./login.ts";
 
@@ -24,7 +26,7 @@ export interface Passkey {
 /** Logs in with a passkey of the visitor's choosing. */
 export async function logIn(): Promise<Login> {
   const optionsJSON = await api<PublicKeyCredentialRequestOptionsJSON>("POST", "/auth/passkey/options", {});
-  const response = await dialog(() => startAuthentication({ optionsJSON }));
+  const response = await dialog("Continue with passkey", () => startAuthentication({ optionsJSON }));
   const login = await api<Login>("POST", "/auth/passkey/login", { response });
   keep(login);
   return login;
@@ -36,7 +38,7 @@ export async function logIn(): Promise<Login> {
  */
 export async function add(name: string, code?: string): Promise<string> {
   const optionsJSON = await api<PublicKeyCredentialCreationOptionsJSON>("POST", "/auth/passkey/register/options", { code });
-  const response = await dialog(() => startRegistration({ optionsJSON }));
+  const response = await dialog("Make a passkey", () => startRegistration({ optionsJSON }));
   const { name: added, ...login } = await api<{ name: string } & Partial<Login>>("POST", "/auth/passkey/register", { response, name, code });
   if (login.token && login.key && login.expires) keep(login as Login);
   return added;
@@ -55,15 +57,21 @@ export function here(): string {
   return [system, browser].filter(Boolean).join(" · ") || "a browser";
 }
 
-/** The browser's dialog, its refusals in the guest's words. */
-async function dialog<T>(open: () => Promise<T>): Promise<T> {
+/** The browser's dialog, offered on a key called `label` if it needs a tap; its refusals in the guest's words. */
+async function dialog<T>(label: string, open: () => Promise<T>): Promise<T> {
   try {
-    return await open();
+    return await gesture(label, KeyRound, () =>
+      open().catch((error: Error) => {
+        // The library wraps the browser's errors, keeping their names.
+        throw error.name === "NotAllowedError" ? new NeedsTouch() : error;
+      }),
+    );
   } catch (error) {
     if (error instanceof WebAuthnError && error.code === "ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED") {
       throw new No("This device has a passkey for the site already.");
     }
-    if ((error as Error).name === "NotAllowedError") throw new No("Cancelled, or the browser said no.");
+    if (error instanceof NeedsTouch) throw new No("Cancelled, or the browser said no.");
+    if (error instanceof No) throw error;
     throw new No(`The browser could not: ${(error as Error).message}`);
   }
 }

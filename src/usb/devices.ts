@@ -6,6 +6,8 @@
 // that have asked, as on any desk.
 
 import { AdbDaemonWebUsbDevice, matchFilters } from "@yume-chan/adb-daemon-webusb";
+import { Usb } from "lucide-react";
+import { gesture } from "../gesture.ts";
 import type { Machine, PortNumber } from "../machine.ts";
 import * as adb from "./adb.ts";
 import * as fastboot from "./fastboot.ts";
@@ -52,10 +54,10 @@ export async function attach(tool: Tool, machine: Machine) {
   let device = (await usb.getDevices()).find((device) => matchFilters(device, [INTERFACES[tool]]));
   if (!device) {
     try {
-      device = await usb.requestDevice({ filters: Object.values(INTERFACES) });
-    } catch (error) {
-      // The browser lists devices only right after a key press or a tap.
-      return down(machine, tool, named(error, "SecurityError") ? "activation" : "cancelled");
+      // The browser lists devices only as the visitor touches the page.
+      device = await gesture("Choose a phone", Usb, () => usb.requestDevice({ filters: Object.values(INTERFACES) }));
+    } catch {
+      return down(machine, tool, "cancelled");
     }
   }
   await join(tool, device, machine);
