@@ -36,8 +36,8 @@ export const GUEST = 1000;
 /** Reads `count` bytes at `offset`. */
 export type Reader = (offset: number, count: number) => Promise<Uint8Array>;
 
-/** How to read each file the page put there, by its key. */
-const readers = new Map<string, Reader>();
+/** Each file the page put there, by its key: its inode, and how to read it. */
+const lent = new Map<string, { inode: Inode; read: Reader }>();
 const taught = new WeakSet<Filesystem>();
 
 /** The machine's filesystem, its storage taught the page's keys. */
@@ -47,12 +47,16 @@ function filesystem(machine: Machine): Filesystem {
   const storage = fs.storage;
   fs.storage = Object.assign(Object.create(storage) as Storage, {
     async read(key: string, offset: number, count: number, size: number) {
-      const read = readers.get(key);
-      return read ? read(offset, count) : storage.read(key, offset, count, size);
+      const file = lent.get(key);
+      return file ? file.read(offset, count) : storage.read(key, offset, count, size);
     },
-    // The guest wrote to the file: v86 holds the whole of it from now on.
+    // v86 says so each time the guest closes a file, and once as it writes to
+    // one: from then on it holds the whole of the file itself, and the inode
+    // says so. Only then is the way to read it of no more use.
     uncache(key: string) {
-      if (!readers.delete(key)) storage.uncache(key);
+      const file = lent.get(key);
+      if (!file) storage.uncache(key);
+      else if (file.inode.status !== ELSEWHERE) lent.delete(key);
     },
   });
   taught.add(fs);
@@ -84,7 +88,7 @@ export function directory(machine: Machine, path: string): number {
 /** Puts the file `name` in directory `parent`, `size` bytes that `read` gives, under the storage key `key`. */
 export function lend(machine: Machine, parent: number, name: string, size: number, key: string, read: Reader, mtime = Date.now() / 1000) {
   const fs = filesystem(machine);
-  Object.assign(fs.inodes[fs.CreateFile(plain(name), parent)]!, {
+  const inode = Object.assign(fs.inodes[fs.CreateFile(plain(name), parent)]!, {
     size,
     status: ELSEWHERE,
     sha256sum: key,
@@ -93,7 +97,7 @@ export function lend(machine: Machine, parent: number, name: string, size: numbe
     gid: GUEST,
     mtime: Math.floor(mtime),
   } satisfies Partial<Inode>);
-  readers.set(key, read);
+  lent.set(key, { inode, read });
 }
 
 /** A reader for bytes already here. */
