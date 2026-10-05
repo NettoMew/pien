@@ -1,7 +1,8 @@
-# Builds the whole site from scratch — kernel, Edit, image, snapshot, page —
-# checks it with a pretend phone, a pretend serial port, passkeys in software
-# and a real browser, and hands the result over as the "site" artifact, ready
-# for any static host (public/_headers sets the cache rules). The workbench
+# Builds the whole site from scratch — kernel, the tools Alpine lacks, image,
+# snapshot, page — checks it with pretend devices (USB, serial, Bluetooth LE),
+# a pretend folder and save dialog, passkeys in software and a real browser,
+# and hands the result over as the "site" artifact, ready for any static host
+# (public/_headers sets the cache rules). The workbench
 # and the WARP client are sealed, and built no more (docs/workbench.md,
 # docs/warp.md).
 
@@ -26,11 +27,11 @@ jobs:
 
       - run: npm ci
 
-      # Downloads (Alpine packages, BIOS), the kernel and Edit are keyed by content.
+      # Downloads (Alpine packages, BIOS), the kernel and the tools are keyed by content.
       - uses: actions/cache@v4
         with:
           path: .cache
-          key: cache-${{ hashFiles('image/kernel/**', 'image/edit/**', 'image/image.config.ts') }}
+          key: cache-${{ hashFiles('image/kernel/**', 'image/tools/**', 'image/image.config.ts') }}
           restore-keys: cache-
 
       # The network relay (relay/, Rust): a smoltcp guest end to end through it.
@@ -41,10 +42,12 @@ jobs:
       - run: npm test --prefix press
 
       - run: npm run build:kernel
-      - run: npm run build:edit
-      - run: npm run build:vm
+      - run: npm run build:tools
+      - run: npm run build:vm # image, snapshot, and what Python's tools read as they start
       - run: npm run check:usb
       - run: npm run check:serial
+      - run: npm run check:ble
+      - run: npm run check:files
       - run: npm run lint
       - run: npm run build # type-checks first
       - run: npm run check:login # passkeys and relays, in Chrome, against the build
