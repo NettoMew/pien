@@ -3,8 +3,9 @@
 #   awk -v width=78 -f md.awk post.md     # width: whole lines, margin included
 #
 # Covers what the posts here use: front matter, headings, paragraphs, lists,
-# quotes, fenced code, rules, and inline **bold**, *italic*, `code` and
-# [links](url) — the last as OSC 8 hyperlinks you can click.
+# quotes, fenced code, rules, pictures on lines of their own, and inline
+# **bold**, *italic*, `code` and [links](url) — the last as OSC 8 hyperlinks
+# you can click.
 #
 # Wrapping counts display columns (CJK takes two), breaks between Chinese
 # characters as well as at spaces, and lets closing punctuation hang past the
@@ -25,6 +26,7 @@ BEGIN {
 	PANEL = ESC "[40m"
 	HANG = "，。、；：！？」』）】》…,.;:!?)"
 	MARGIN = "  "
+	ROWS = 18 # the tallest a picture gets
 	if (width < 20) width = 78
 	BASE = ESC "[39m"
 }
@@ -76,15 +78,18 @@ function emphasis(s,   out) {
 # (match() sets the globals RSTART and RLENGTH, and the helpers called below
 # match too — so each loop keeps its own copies.)
 
-function links(s,   out, at, len, t, mid) {
+function links(s,   out, at, len, t, mid, before, mark) {
 	out = ""
 	while (match(s, /\[[^]]*\]\([^)]*\)/)) {
 		at = RSTART; len = RLENGTH
 		t = substr(s, at, len)
 		mid = index(t, "](")
-		out = out emphasis(substr(s, 1, at - 1)) \
+		# An image amid the text is a link to it, marked as one.
+		before = substr(s, 1, at - 1); mark = ""
+		if (substr(before, length(before)) == "!") { before = substr(before, 1, length(before) - 1); mark = "▣ " }
+		out = out emphasis(before) \
 			ESC "]8;;" substr(t, mid + 2, length(t) - mid - 2) ESC "\\" \
-			CYAN emphasis(substr(t, 2, mid - 2)) BASE ESC "]8;;" ESC "\\"
+			CYAN mark emphasis(substr(t, 2, mid - 2)) BASE ESC "]8;;" ESC "\\"
 		s = substr(s, at + len)
 	}
 	return out emphasis(s)
@@ -254,6 +259,33 @@ function panel(s,   avail, i, n, k, ch, w, chunk, cw, lead) {
 	print MARGIN PANEL lead CODE chunk spaces(PANELW - 2 - cw) RESET
 }
 
+# A line that is only an image: the picture itself, in the iTerm2 inline-image
+# sequence the page draws (src/terminal.ts), fitted to the measure and at most
+# ROWS rows tall, its description beneath. One that cannot be shown from here
+# (on the web, missing, or by a name the shell would trip on) is a link.
+function picture(s,   mid, alt, src, path, data, cmd, n, size) {
+	mid = index(s, "](")
+	alt = substr(s, 3, mid - 3)
+	src = substr(s, mid + 2); sub(/\) *$/, "", src)
+	path = src ~ /^\// ? src : DIR src
+	gap("picture")
+	if (src !~ /^[a-z]+:/ && index(path, "'") == 0 && (getline data < path) >= 0) {
+		close(path)
+		cmd = "base64 -w0 '" path "'"
+		data = ""; cmd | getline data; close(cmd)
+		if (data != "") {
+			# The sequence wants the picture's size in bytes: three for every
+			# four characters of base64, less its padding.
+			n = length(data)
+			size = n / 4 * 3 - (substr(data, n) == "=") - (substr(data, n - 1, 1) == "=")
+			printf "%s%s]1337;File=inline=1;size=%d;width=%d;height=%d;preserveAspectRatio=1:%s%c\n", MARGIN, ESC, size, width - length(MARGIN), ROWS, data, 7
+			if (alt != "") print MARGIN MUTED alt RESET
+			return
+		}
+	}
+	print MARGIN ESC "]8;;" src ESC "\\" CYAN "▣ " (alt != "" ? alt : src) RESET ESC "]8;;" ESC "\\"
+}
+
 function front(   meta, tags) {
 	tags = meta_tags
 	gsub(/^\[|\]$/, "", tags); gsub(/, */, " · ", tags)
@@ -264,7 +296,7 @@ function front(   meta, tags) {
 	if (meta != "") { if (meta_title == "") gap("h"); print MARGIN MUTED meta RESET }
 }
 
-NR == 1 { print "" }
+NR == 1 { print ""; DIR = FILENAME; sub(/[^\/]*$/, "", DIR) }
 NR == 1 && $0 == "---" { mode = "front"; next }
 
 mode == "front" {
@@ -299,6 +331,8 @@ mode == "code" {
 /^[-*+] / { flush(); block = "ul"; buf = substr($0, 3); next }
 
 /^[0-9]+\. / { flush(); block = "ol"; match($0, /^[0-9]+\./); marker = substr($0, 1, RLENGTH); buf = substr($0, RLENGTH + 2); next }
+
+/^!\[[^]]*\]\([^)]+\) *$/ { flush(); picture($0); next }
 
 /^[ \t]*$/ { flush(); next }
 

@@ -3,6 +3,7 @@
 
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
+import { ImageAddon } from "@xterm/addon-image";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
@@ -47,6 +48,9 @@ term.loadAddon(fit);
 term.loadAddon(new Unicode11Addon());
 term.unicode.activeVersion = "11"; // CJK and emoji take two cells
 term.loadAddon(new WebLinksAddon((_, url) => openLink(url)));
+// Pictures in the text: the iTerm2 inline-image sequence, which md.awk prints
+// for a post's or a moment's images. SIXEL is the guest's to choose too.
+term.loadAddon(new ImageAddon({ pixelLimit: 4_000_000, storageLimit: 64 }));
 
 /**
  * OSC 52: the guest may put text on the visitor's clipboard (Neovim's yanks,
