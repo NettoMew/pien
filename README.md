@@ -5,6 +5,7 @@
 ```sh
 npm install
 npm run build:kernel   # 在 Docker 里编译内核；本机没有 Docker 时：BUILD_HOST=<Linux 主机> npm run build:kernel
+npm run build:edit     # 同样在 Docker 里编译 Microsoft Edit（i686 的 Alpine 容器）
 npm run build:vm       # 构建镜像，再在 Node 里开机、存一份快照
 npm run dev            # http://localhost:5173
 ```
@@ -41,6 +42,8 @@ npm run dev            # http://localhost:5173
 **页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再列出机器的情况，进度条跟着真实的下载走；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制。
 
 **联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。
+
+**编辑器**。nano，和 [Microsoft Edit](https://github.com/microsoft/edit)（`edit`，也叫 `msedit`）。Edit 不在 Alpine 的仓库里，`image/edit/build.sh` 在 i686 的 Alpine 容器里从固定的版本编译它，链接客户机自己的 musl；查找替换要的 ICU 用到才读。
 
 **手机**。客户机里有真正的 adb 和 fastboot，经 WebUSB 连访客电脑上的手机（[docs/workbench.md](docs/workbench.md)）。
 

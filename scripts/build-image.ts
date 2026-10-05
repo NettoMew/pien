@@ -18,6 +18,7 @@ import { BLOBS } from "../vm.config.ts";
 import { Repository } from "./lib/apk.ts";
 import { CONTENT, frontMatter } from "./lib/content.ts";
 import { cached } from "./lib/fetch.ts";
+import { editBuild } from "./lib/edit.ts";
 import { kernelBuild } from "./lib/kernel.ts";
 import { info, size, step } from "./lib/log.ts";
 import { putHashed, VM, writeManifest } from "./lib/manifest.ts";
@@ -133,6 +134,20 @@ for await (const path of walk(content)) {
 
 posts.sort((a, b) => b[0]!.localeCompare(a[0]!));
 rootfs.write("/usr/share/home/posts", posts.map((p) => p.join("\t") + "\n").join(""));
+
+// ─── Edit ────────────────────────────────────────────────────────────────────
+
+step("edit");
+const edit = await editBuild();
+if (!existsSync(edit.file)) {
+  console.error("No Edit built for this image yet: npm run build:edit (BUILD_HOST=<linux host> without local Docker)");
+  process.exit(1);
+}
+const msedit = await readFile(edit.file);
+// Its own name, as Microsoft asks of distributions, and the short one beside it.
+rootfs.write("/usr/bin/msedit", msedit, { mode: 0o755 });
+rootfs.symlink("/usr/bin/edit", "msedit");
+info(`Edit ${edit.version} · ${size(msedit.length)}`);
 
 // ─── Kernel ──────────────────────────────────────────────────────────────────
 

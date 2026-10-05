@@ -8,7 +8,8 @@ function help --description 'What this machine can do'
         'net on' 'go online: curl, ping, ssh, mtr' \
         drop 'bring in files from your computer' \
         'adb  fastboot' 'a phone over USB, as on any desk' \
-        'serial  tio' 'a serial port from your computer'
+        'serial  tio' 'a serial port from your computer' \
+        'nano  edit' 'edit a file'
 
     echo
     set -l hl (set_color cyan)

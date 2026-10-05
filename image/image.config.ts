@@ -14,6 +14,9 @@ export default {
     "android-tools-adb", "android-tools-fastboot", "socat",
     // A serial port from the visitor's computer (src/serial/), and a terminal for it.
     "tio",
+    // Editors: nano, and Microsoft Edit (image/edit/, built apart), whose
+    // search and replace load ICU.
+    "nano", "icu-libs",
   ],
 
   // fish wants the full terminfo database; the common entries are plenty.

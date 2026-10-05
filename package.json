@@ -43,6 +43,7 @@
   },
   "scripts": {
     "build:kernel": "node scripts/build-kernel.ts",
+    "build:edit": "node scripts/build-edit.ts",
     "build:warp": "node scripts/build-warp.ts",
     "build:image": "node scripts/build-image.ts",
     "build:workbench": "node scripts/build-workbench.ts",

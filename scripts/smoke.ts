@@ -1,6 +1,6 @@
 // End-to-end check in a real browser: the machine powers on and resumes, a
-// visitor types, a post is fetched on demand, and a phone
-// gets its keys.
+// visitor types, a post is fetched on demand, a file is written in Edit, and a
+// phone gets its keys.
 // Screenshots land in .cache/smoke/.
 //
 //   npm run dev            # in another terminal
@@ -34,6 +34,9 @@ const type = async (text: string, settle = 1200) => {
   await desktop.waitForTimeout(settle);
 };
 const atPrompt = (page: Page) => page.waitForSelector("[data-state=running]", { timeout: 60e3 });
+/** Waits for `text` on the screen (the DOM renderer's rows), or throws after a while. */
+const onScreen = (page: Page, text: string) =>
+  page.waitForFunction((text) => document.querySelector(".xterm-rows")?.textContent?.includes(text), text, { timeout: 30e3 });
 const report = (page: Page) => page.on("pageerror", (err) => console.error("page error:", err.message));
 report(desktop);
 
@@ -64,6 +67,18 @@ await shot(desktop, "5-help");
 await type("clear; fastfetch", 6000);
 await shot(desktop, "6-fastfetch");
 
+step("an editor");
+const opened = bytes;
+await type("clear; edit /tmp/note.txt", 3000);
+info(`Edit read ${size(bytes - opened)}`);
+await desktop.keyboard.type("written in Edit", { delay: 25 });
+await shot(desktop, "7-edit");
+await desktop.keyboard.press("Control+S");
+await desktop.keyboard.press("Control+Q");
+await desktop.waitForTimeout(500);
+await type("clear; cat /tmp/note.txt");
+await onScreen(desktop, "written in Edit");
+
 step("phone");
 const phone = await browser.newPage({ ...devices["Pixel 7"] });
 report(phone);
@@ -71,7 +86,7 @@ await phone.goto(URL);
 await atPrompt(phone);
 await phone.getByRole("button", { name: "blog", exact: true }).tap();
 await phone.waitForTimeout(1500);
-await shot(phone, "7-phone");
+await shot(phone, "8-phone");
 
 step("network");
 info(...fetched);
