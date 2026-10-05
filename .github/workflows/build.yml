@@ -1,8 +1,8 @@
-# Builds the whole site from scratch — WARP client, kernel, image, the
-# workbench's toolchain disk, snapshots, page — checks it with a pretend phone,
-# a pretend serial port and a real browser, and hands the result over as the
-# "site" artifact, ready for any static host (public/_headers sets the cache
-# rules).
+# Builds the whole site from scratch — kernel, image, snapshot, page —
+# checks it with a pretend phone, a pretend serial port and a real browser, and
+# hands the result over as the "site" artifact, ready for any static host
+# (public/_headers sets the cache rules). The workbench and the WARP client are
+# sealed, and built no more (docs/workbench.md, docs/warp.md).
 
 name: build
 
@@ -25,25 +25,19 @@ jobs:
 
       - run: npm ci
 
-      # Downloads (Alpine packages, BIOS), the kernel and the toolchain disk are keyed by content.
+      # Downloads (Alpine packages, BIOS) and the kernel are keyed by content.
       - uses: actions/cache@v4
         with:
           path: .cache
-          key: cache-${{ hashFiles('image/kernel/**', 'image/image.config.ts', 'image/workbench/**') }}
+          key: cache-${{ hashFiles('image/kernel/**', 'image/image.config.ts') }}
           restore-keys: cache-
 
       # The network relay (relay/, Rust): a smoltcp guest end to end through it.
       - run: cargo test --manifest-path relay/Cargo.toml
 
-      # The WARP client (warp/, Rust) is a wasm module the page imports.
-      - run: rustup target add wasm32-unknown-unknown
-      - run: cargo test --manifest-path warp/Cargo.toml
-      - run: npm run build:warp
-
       - run: npm run build:kernel
-      - run: npm run build:vm # the toolchain disk is built with this runner's Docker
+      - run: npm run build:vm
       - run: npm run check:usb
-      - run: npm run check:usb -- workbench
       - run: npm run check:serial
       - run: npm run lint
       - run: npm run build # type-checks first

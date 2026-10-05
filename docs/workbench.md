@@ -1,5 +1,13 @@
 # 工作台（`workbench`）
 
+> **已封存（2026-10-05）。** 代码都还在，但工具链盘不再构建，也不随站点部署，页面不会启动它，客户机里也没有 `workbench` 和 `home` 两个命令。adb、fastboot、串口、拖进文件都在 home 上，不受影响。
+>
+> 解封：
+> 1. `vm.config.ts` 里把 workbench 的 `sealed` 改回 `false`；
+> 2. 把 `image/workbench/functions/` 里的三个文件移回 `image/rootfs/etc/fish/functions/`，`help.fish` 里加回工作台的几行（封存前的版本：`git show 50c10d8:image/rootfs/etc/fish/functions/help.fish`）；
+> 3. `package.json` 的 `build:vm` 加回 `npm run build:workbench`，CI 加回构建和 `check:usb -- workbench`；
+> 4. 重新构建、部署，站点会重新带上约 740 MB 的盘。
+
 敲 `workbench`，屏幕关掉，换一台大机器开起来：768 MB 可用内存，外加一块装着工具链的盘。`home` 换回来。地址里带 `?workbench` 时直接开工作台。
 
 ```

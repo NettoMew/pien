@@ -1,7 +1,7 @@
 // Boots each machine once in Node, rehearses a visit, and saves a snapshot.
 //
-//   npm run build:state              # both machines
-//   npm run build:state workbench    # just the one
+//   npm run build:state              # every machine in service (vm.config.ts)
+//   npm run build:state workbench    # just the one, sealed or not
 //
 // A visitor restores the snapshot instead of booting, and lands on a prompt
 // that is already there:
@@ -20,7 +20,7 @@ import { join, sep } from "node:path";
 import { constants, zstdCompressSync } from "node:zlib";
 import xterm from "@xterm/headless"; // CommonJS: no named exports
 import { Machine } from "../src/machine.ts";
-import { machines, type MachineName, v86Options } from "../vm.config.ts";
+import { inService, machines, type MachineName, v86Options } from "../vm.config.ts";
 import { info, size, step } from "./lib/log.ts";
 import { putHashed, readManifest, VM, writeManifest } from "./lib/manifest.ts";
 
@@ -95,7 +95,7 @@ async function snapshot(name: MachineName) {
   machine.resize(COLS, ROWS);
   machine.attach();
   await until("the first prompt", () => prompts() > 0);
-  await run("functions -q help blog cat open net workbench home fish_right_prompt");
+  await run("functions -q help blog cat open net fish_right_prompt");
   await run("printf '# warm\\n' | awk -v width=60 -f /usr/libexec/home/md.awk > /dev/null; ls -l ~ ~/blog > /dev/null");
   machine.control("detach"); // the next session waits for an attach again
   await until("detach", () => control.has("detached"));
@@ -132,7 +132,7 @@ async function snapshot(name: MachineName) {
 }
 
 const requested = process.argv.slice(2);
-for (const name of requested.length ? requested : Object.keys(machines)) {
+for (const name of requested.length ? requested : inService) {
   if (!(name in machines)) throw new Error(`no machine called ${name}; there is ${Object.keys(machines).join(" and ")}`);
   await snapshot(name as MachineName);
 }

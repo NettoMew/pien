@@ -1,3 +1,5 @@
+# Sealed since 2026-10-05, with the workbench (vm.config.ts, docs/workbench.md).
+#
 # The workbench's toolchain disk (docs/workbench.md), built in the guest's own
 # userland — Alpine for i686 — by scripts/build-workbench.ts, which takes home
 # the squashfs the last stage holds.

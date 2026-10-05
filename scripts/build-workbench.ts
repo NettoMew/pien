@@ -9,6 +9,9 @@
 // pins Neovim's plugins into image/workbench/nvim/lazy-lock.json; later builds
 // restore those commits. Builds are cached under .cache/workbench/, keyed by
 // everything that goes into them.
+//
+// Sealed since 2026-10-05, with the workbench (vm.config.ts): npm run build:vm
+// no longer runs it; docs/workbench.md says how to unseal it.
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";

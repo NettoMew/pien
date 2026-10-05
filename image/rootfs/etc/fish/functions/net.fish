@@ -1,4 +1,4 @@
-function net --description 'The network: net on | net off | net login | net warp' --argument-names verb
+function net --description 'The network: net on | net off | net login' --argument-names verb
     set -l dim (set_color brblack)
     set -l hl (set_color cyan)
     set -l n (set_color normal)
@@ -6,15 +6,10 @@ function net --description 'The network: net on | net off | net login | net warp
     set -l state (string split ' ' -- $line)
 
     switch "$verb"
-        case on warp
-            set -l way relay
-            test $verb = warp; and set way warp
-            if test "$state[1]" = up -a "$state[2]" = $way
+        case on
+            if test "$state[1]" = up
                 __net_up $state[2..3]
                 return
-            end
-            if test $way = warp; and not test -e /run/net/known; and not __net_consent
-                return 1
             end
             set state (__net_ask $verb)
             if test "$state[1]" = down -a "$state[2]" = nokey
@@ -46,28 +41,16 @@ function net --description 'The network: net on | net off | net login | net warp
         case logout
             printf '\e]7337;net;logout\a'
             echo $dim'  Forgot the relay password.'$n
-        case forget
-            printf '\e]7337;net;forget\a'
-            echo $dim"  Deleted this browser's WARP device."$n
         case ''
             if test "$state[1]" = up
-                echo '  '$hl'Online'$n' through '(__net_name $state[2])', at '$state[3]
+                echo '  '$hl'Online'$n' through the relay, at '$state[3]
             else
                 echo '  Offline.'
             end
             echo $dim'  net on · net off · net login'$n
-            echo $dim'  net warp: via Cloudflare WARP (experimental)'$n
         case '*'
-            echo 'net: usage: net [on | off | login | logout | warp | forget]' >&2
+            echo 'net: usage: net [on | off | login | logout]' >&2
             return 1
-    end
-end
-
-function __net_name --argument-names way
-    if test "$way" = warp
-        echo Cloudflare WARP
-    else
-        echo the relay
     end
 end
 
@@ -78,9 +61,7 @@ function __net_ask --argument-names verb
     # A private escape sequence; the page around this terminal acts on it.
     # On stderr: stdout is what the caller captures.
     printf '\e]7337;net;%s\a' $verb >&2
-    set -l way relay
-    test $verb = warp; and set way warp
-    echo (set_color brblack)'  Connecting through '(__net_name $way)' …'(set_color normal) >&2
+    echo (set_color brblack)'  Connecting through the relay …'(set_color normal) >&2
     for i in (seq 300)
         read -l line </run/net/state
         if test "$line" != waiting
@@ -99,35 +80,11 @@ function __net_login
     echo (set_color brblack)'  Kept in this browser, as a key made from it.'(set_color normal)
 end
 
-function __net_consent
-    set -l dim (set_color brblack)
-    set -l n (set_color normal)
-    echo
-    echo '  net warp puts this machine on'
-    echo '  Cloudflare WARP, with an'
-    echo '  unofficial client.'
-    echo $dim
-    echo '  · The first time, it registers an'
-    echo '    anonymous device; its key stays'
-    echo '    in your browser.'
-    echo '  · Traffic goes through this site to'
-    echo '    Cloudflare. The site sees only'
-    echo '    encrypted bytes; it also passes'
-    echo '    on the registration.'
-    echo '  · Not a Cloudflare service: it may'
-    echo '    stop working at any time.'
-    echo "  · Going on accepts Cloudflare's terms:"
-    echo '    https://www.cloudflare.com/application/terms/'$n
-    echo
-    read -l -P '  Go on? [y/N] ' answer
-    string match -qi y -- $answer
-end
-
 function __net_up --argument-names way address
     set -l dim (set_color brblack)
     set -l hl (set_color cyan)
     set -l n (set_color normal)
-    echo '  '$hl'Online'$n' through '(__net_name $way)', at '$address
+    echo '  '$hl'Online'$n' through the relay, at '$address
     # Ask Cloudflare which way out this took.
     set -l trace (curl -s --max-time 15 https://1.1.1.1/cdn-cgi/trace)
     set -l ip (string replace -rf '^ip=' '' -- $trace)
@@ -152,25 +109,12 @@ function __net_why
             set why 'Quiet for too long, so the relay hung up. net on to come back.'
         case norelay
             set why 'Cannot reach the relay.'
-        case api
-            set why 'Could not register a WARP device. Try again later.'
-            test "$argv[2]" = 429; and set why 'Too many registrations. Wait a while.'
-        case pipe
-            set why "Cannot reach this site's WARP pipe."
-        case denied
-            set why 'Cloudflare no longer knows this device, so it is gone: net warp registers a new one.'
-        case pin
-            set why "The WARP edge's key is not the one it should be. Stopped."
-        case refused
-            set why "WARP refused the connection (HTTP $argv[2])."
         case timeout
             set why 'No answer: the connection is gone.'
         case closed
             set why 'The connection closed.'
         case off
             set why 'Off.'
-        case device
-            set why 'The saved device is broken: net forget, then try again.'
     end
     echo '  '$why >&2
     echo (set_color brblack)'  Offline, there is still: blog · help'(set_color normal) >&2

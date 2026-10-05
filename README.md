@@ -4,27 +4,26 @@
 
 ```sh
 npm install
-npm run build:warp     # 用 Rust 编 WARP 客户端（wasm）；先 rustup target add wasm32-unknown-unknown
 npm run build:kernel   # 在 Docker 里编译内核；本机没有 Docker 时：BUILD_HOST=<Linux 主机> npm run build:kernel
-npm run build:vm       # 构建镜像和工作台的工具链盘（也用 Docker），再在 Node 里开两台机器、各存一份快照
+npm run build:vm       # 构建镜像，再在 Node 里开机、存一份快照
 npm run dev            # http://localhost:5173
 ```
 
 | 命令 | 作用 |
 |---|---|
 | `npm run shell` | 从本地终端连进这台机器（Ctrl-] 退出） |
-| `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件，加 `--machine workbench` 连进工作台 |
+| `npm run shell -- -c "uname -a"` | 跑一条命令；加 `--trace` 看客户机通过 9p 读了哪些文件 |
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
-| `npm run check:serial [-- workbench]` | 给 home（或工作台）插一根假的 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍（见 [docs/serial.md](docs/serial.md)） |
-| `npm run check:usb [-- workbench]` | 给 home（或工作台）插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
+| `npm run check:serial` | 给机器插一根假的 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍（见 [docs/serial.md](docs/serial.md)） |
+| `npm run check:usb` | 给机器插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
 | `RELAY=host:port npm run dev` | 开发服务器把 `/relay` 转给那里的中继（默认 127.0.0.1:8095，见 docs/relay.md） |
-| `npm run warp -- register` / `delete` | 注册或删除一个开发用的 WARP 设备，配合 `warp/examples/edge.rs` 直连入口（见 [docs/warp.md](docs/warp.md)） |
-| `WARP_EDGE=host:port npm run dev` | 本机连不上 WARP 入口时，让开发服务器走别的路径，比如一条 SSH 转发 |
 
-页面加 `?cold` 会冷启动内核，而不是恢复快照（调试用）；加 `?workbench` 直接开工作台。
+页面加 `?cold` 会冷启动内核，而不是恢复快照（调试用）。
+
+工作台和 `net warp` 已封存（2026-10-05）：代码原样留着，不再构建、不再部署，客户机里也没有入口；怎么解封见 [docs/workbench.md](docs/workbench.md) 和 [docs/warp.md](docs/warp.md) 开头。
 
 ## 怎么工作的
 
@@ -41,9 +40,11 @@ npm run dev            # http://localhost:5173
 
 **页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再列出机器的情况，进度条跟着真实的下载走；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制。
 
-**联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。另一条路 `net warp` 用浏览器里的 Rust/wasm 客户端直连 Cloudflare WARP（试验，[docs/warp.md](docs/warp.md)）。
+**联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），TCP 先连上真实目标再回 SYN，UDP、ping、DNS 都是真的；WebSocket 里还有一层用口令派生密钥的加密，前面的 TLS 终结者看不到帧。详见 [docs/relay.md](docs/relay.md)。
 
-**工作台**（`image/workbench/`，[docs/workbench.md](docs/workbench.md)）。客户机里敲 `workbench`，屏幕关掉，换一台 768 MB 的机器开起来，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim（LazyVim，每种语言的 LSP、格式化、调试）。`home` 换回来。两台机器上都有真正的 adb 和 fastboot，经 WebUSB 连访客电脑上的手机（同一篇文档）。
+**手机**。客户机里有真正的 adb 和 fastboot，经 WebUSB 连访客电脑上的手机（[docs/workbench.md](docs/workbench.md)）。
+
+**工作台**（`image/workbench/`，已封存）。一台 768 MB 的大机器，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim。
 
 **串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，用 tio 连。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。
 
@@ -71,13 +72,11 @@ npm run dev            # http://localhost:5173
 | 内核 | 1.6 MB；客户机可用内存 58 MB |
 | 整个系统 | 1763 个文件块，92 MB，压缩后 26 MB，全部按需加载 |
 | `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
-| `net warp` | 第一次 4 秒连上（含注册），之后 1.7 秒；客户机里下载 1.7 MB/s；WARP 客户端 brotli 后 111 KB，用到才加载 |
 | 串口 | 假线上 64 KB 在 1500000 波特下往返 1.2 秒；页面这一侧用到才加载 |
-| 工作台 | 快照 7.6 MB；工具链盘 739 MB，按需读取；`gcc hello.c` 6 秒，`rustc` 12 秒，`go run` 第一次 13 秒、之后 2 秒，`nvim` 载入全部插件 3 秒 |
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)（`net on`）和 [docs/warp.md](docs/warp.md)（`net warp`）；工作台见 [docs/workbench.md](docs/workbench.md)，串口见 [docs/serial.md](docs/serial.md)。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)；串口见 [docs/serial.md](docs/serial.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
 
 ## 踩过的坑
 

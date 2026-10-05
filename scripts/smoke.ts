@@ -1,6 +1,6 @@
 // End-to-end check in a real browser: the machine powers on and resumes, a
-// visitor types, a post is fetched on demand, the workbench takes over and
-// hands back, and a phone gets its keys.
+// visitor types, a post is fetched on demand, and a phone
+// gets its keys.
 // Screenshots land in .cache/smoke/.
 //
 //   npm run dev            # in another terminal
@@ -64,26 +64,6 @@ await shot(desktop, "5-help");
 await type("clear; fastfetch", 6000);
 await shot(desktop, "6-fastfetch");
 
-step("the workbench");
-// Powering down marks the screen booting; the workbench up marks it running again.
-const switchTo = async (command: string) => {
-  const started = Date.now();
-  const sent = bytes;
-  await type(command, 0);
-  await desktop.waitForSelector("[data-state=booting]");
-  await atPrompt(desktop);
-  info(`${command} up after ${((Date.now() - started) / 1000).toFixed(1)} s · ${size(bytes - sent)} transferred`);
-};
-await switchTo("workbench");
-await desktop.waitForTimeout(300);
-await shot(desktop, "7-workbench");
-await type("clear; help", 1500);
-const compiled = bytes;
-await type("printf 'int main(void){return 0;}\\n' > /tmp/a.c; gcc /tmp/a.c -o /tmp/a && echo compiled", 20000);
-info(`gcc read ${size(bytes - compiled)} of the toolchain disk`);
-await shot(desktop, "8-workbench-gcc");
-await switchTo("home");
-
 step("phone");
 const phone = await browser.newPage({ ...devices["Pixel 7"] });
 report(phone);
@@ -91,7 +71,7 @@ await phone.goto(URL);
 await atPrompt(phone);
 await phone.getByRole("button", { name: "blog", exact: true }).tap();
 await phone.waitForTimeout(1500);
-await shot(phone, "9-phone");
+await shot(phone, "7-phone");
 
 step("network");
 info(...fetched);

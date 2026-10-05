@@ -1,4 +1,5 @@
 // A WARP device for development, outside the browser.
+// Sealed since 2026-10-05, with `net warp` (docs/warp.md).
 //
 //   node scripts/warp.ts register   writes .cache/warp/device.json and open.bin
 //   node scripts/warp.ts delete     deletes that device again

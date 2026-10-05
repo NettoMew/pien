@@ -6,6 +6,8 @@
 //
 // WARP_EDGE overrides the edge (host:port) — say, an SSH forward through a
 // machine that can reach it.
+//
+// Sealed since 2026-10-05, with `net warp`: vite.config.ts loads it no more.
 
 import { connect } from "node:net";
 import type { IncomingMessage } from "node:http";

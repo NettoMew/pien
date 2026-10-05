@@ -8,8 +8,6 @@
 #   net up <way> <address/prefix> <gateway> <dns> <mtu>
 #                    a way out is up (src/net/): put eth0 on it
 #   net down <why>   it went down, or was turned off: take eth0 off again
-#   net known        this browser already has a WARP device …
-#   net forgotten    … or no longer
 #   usb key <private> <public> <name>
 #                    this browser's adb key, in base64: PKCS#8, and Android's
 #                    own form of its public half; adb signs with it
@@ -133,8 +131,6 @@ while read -r cmd arg; do
 			shift
 			echo "down $*" > /run/net/state
 			;;
-		known) touch /run/net/known ;;
-		forgotten) rm -f /run/net/known ;;
 		esac
 		;;
 	usb)

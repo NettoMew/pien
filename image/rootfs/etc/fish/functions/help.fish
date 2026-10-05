@@ -9,13 +9,6 @@ function help --description 'What this machine can do'
         drop 'bring in files from your computer' \
         'adb  fastboot' 'a phone over USB, as on any desk' \
         'serial  tio' 'a serial port from your computer'
-    if __on_workbench
-        set -a rows \
-            nvim 'the editor, set up for every language here' \
-            home 'back to the small machine'
-    else
-        set -a rows workbench 'compilers and nvim: a bigger machine'
-    end
 
     echo
     set -l hl (set_color cyan)

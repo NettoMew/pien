@@ -1,5 +1,7 @@
 //! guest@zutto-issho's way onto the internet: Cloudflare WARP, spoken from the page.
 //!
+//! Sealed since 2026-10-05: the page no longer loads it (docs/warp.md).
+//!
 //! The guest's network card produces Ethernet frames; WARP's MASQUE endpoint
 //! takes IP packets as HTTP/2 capsules over TLS. This crate is the whole path
 //! between them as a state machine without I/O (see docs/warp.md):

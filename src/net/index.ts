@@ -1,7 +1,7 @@
-// `net` on the page's side: the guest's network card, wired to one way out
-// at a time — the relay (`net on`, relay.ts) or Cloudflare WARP (`net warp`,
-// ../warp/). Only this much loads with the page; a way out is fetched the
-// first time a visitor asks for it.
+// `net` on the page's side: the guest's network card, wired to a way out,
+// the relay (`net on`, relay.ts). Only this much loads with the page; the way
+// out is fetched the first time a visitor asks for it. (Cloudflare WARP, the
+// other way, is sealed since 2026-10-05; see docs/warp.md.)
 //
 // The guest learns what happened over the control line (hostd):
 //   net up <way> <address/prefix> <gateway> <dns> <mtu>
@@ -18,30 +18,17 @@ export interface Way {
   frame(frame: Uint8Array): void;
 }
 
-const WARP_DEVICE = "warp";
-
-/** Whether this browser already has a WARP device (the guest then skips its notice). */
-export function known(): boolean {
-  try {
-    return localStorage.getItem(WARP_DEVICE) !== null;
-  } catch {
-    return false;
-  }
-}
-
 /** The machine whose network card is wired to `active`. */
 let wired: Machine | undefined;
 let active: Way | undefined;
 let relay: Promise<typeof import("./relay.ts")> | undefined;
-let warp: Promise<typeof import("../warp/session.ts")> | undefined;
 const ways = new Map<string, Way>();
 
 let queue: Promise<unknown> = Promise.resolve();
 
 /**
- * `net on`, `net warp`, `net off`, `net login;<password>`, `net logout`,
- * `net forget` — one after another, so a login is done before the `on` that
- * follows it looks for the key.
+ * `net on`, `net off`, `net login;<password>`, `net logout`, one after
+ * another, so a login is done before the `on` that follows it looks for the key.
  */
 export function net(verb: string, argument: string, machine: Machine) {
   queue = queue.then(() => handle(verb, argument, machine)).catch((error) => console.error("net:", error));
@@ -59,21 +46,12 @@ async function handle(verb: string, argument: string, machine: Machine) {
       const { Relay } = await relay;
       return through("relay", () => new Relay(machine));
     }
-    case "warp": {
-      const { Warp } = await (warp ??= import("../warp/session.ts"));
-      return through("warp", () => new Warp(machine));
-    }
     case "off":
       return active?.disconnect();
     case "login":
       return (await relay).login(decodeURIComponent(argument));
     case "logout":
       return (await relay).logout();
-    case "forget": {
-      const { forget } = await (warp ??= import("../warp/session.ts"));
-      if (ways.get("warp") === active) active?.disconnect();
-      return forget(machine);
-    }
   }
 }
 

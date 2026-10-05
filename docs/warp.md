@@ -1,5 +1,9 @@
 # WARP 直通
 
+> **已封存（2026-10-05）。** `warp/`、`src/warp/` 和这篇文档都原样留着，但页面不再加载 WARP 客户端，构建和 CI 不再编译它，客户机里也没有 `net warp` 和 `net forget`。线上本来就没有部署它需要的 `/warp/` 路由。
+>
+> 解封：把封存前的入口找回来（`git show 50c10d8` 下的 `image/rootfs/etc/fish/functions/net.fish`、`image/rootfs/usr/libexec/home/hostd`、`src/net/index.ts`、`src/session.ts`、`vite.config.ts`），CI 加回 `build:warp` 和 `cargo test --manifest-path warp/Cargo.toml`，再按下文部署 `/warp/edge` 和 `/warp/api/`。
+
 访客在终端里敲 `net warp`，这台虚拟机就作为一台真正的主机接入互联网，出口是 Cloudflare WARP。`curl`、`git`、真实的 `ping` 和 UDP DNS 都能用。不用我们的出口 IP，也没有开放代理。
 
 和 [network.md](network.md) 里的自建 wisp 中继相比，服务器上只剩一根「哑管道」：只能连 WARP 的一个入口，只看得到 TLS 密文。

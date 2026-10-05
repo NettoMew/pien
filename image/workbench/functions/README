@@ -1,0 +1,4 @@
+The guest's way to the workbench and back, sealed with it on 2026-10-05:
+`workbench`, `home`, and the test both use. To unseal the workbench, move
+these three back into image/rootfs/etc/fish/functions/ and follow the rest of
+docs/workbench.md.

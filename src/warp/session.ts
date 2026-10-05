@@ -1,6 +1,9 @@
 // `net warp`: the guest's network card, through the WARP client (warp.wasm),
 // over a WebSocket to the edge. Loaded the first time a visitor asks; see
 // ../net/index.ts for how a way out is chosen and how the guest hears of it.
+//
+// Sealed since 2026-10-05: nothing loads this module any more (docs/warp.md says
+// how to unseal it).
 
 import type { Machine } from "../machine.ts";
 import type { Way } from "../net/index.ts";

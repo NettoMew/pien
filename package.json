@@ -47,7 +47,7 @@
     "build:image": "node scripts/build-image.ts",
     "build:workbench": "node scripts/build-workbench.ts",
     "build:state": "node scripts/build-state.ts",
-    "build:vm": "npm run build:image && npm run build:workbench && npm run build:state",
+    "build:vm": "npm run build:image && npm run build:state",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",

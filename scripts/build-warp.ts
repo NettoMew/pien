@@ -1,6 +1,8 @@
 // Builds the WARP client (warp/, Rust) for the browser and puts it where the
 // page imports it from: src/warp/warp.wasm. Needs the wasm32-unknown-unknown
 // target (rustup target add wasm32-unknown-unknown).
+//
+// Sealed since 2026-10-05, with `net warp` (docs/warp.md): the build no longer runs it.
 
 // WebAssembly's types come with the DOM's.
 /// <reference lib="dom" />

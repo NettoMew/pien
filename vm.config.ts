@@ -5,20 +5,30 @@
 // Both run the same kernel on the same image. The home machine is small and
 // comes up in a moment; the workbench has the memory to compile, and a second
 // disk of toolchains (docs/workbench.md) that /etc/rc lays over /usr.
+//
+// A sealed machine is kept whole, but neither built nor shipped, and the page
+// neither starts it nor switches to it: the workbench, since 2026-10-05.
+// Unsealing it is setting `sealed` to false, and the rest docs/workbench.md says.
 
 import type { V86Options } from "v86";
 
 export const machines = {
   // v86 reserves the top 16 MB of RAM: 80 MB gives the guest a usable 64 MB.
-  home: { memoryMB: 80, disk: false },
+  home: { memoryMB: 80, disk: false, sealed: false },
   // A kernel without highmem addresses up to 896 MB; this stays under it.
-  workbench: { memoryMB: 784, disk: true },
-} as const satisfies Record<string, { memoryMB: number; disk: boolean }>;
+  workbench: { memoryMB: 784, disk: true, sealed: true },
+} as const satisfies Record<string, { memoryMB: number; disk: boolean; sealed: boolean }>;
 
 export type MachineName = keyof typeof machines;
 
 /** What the guest has of a machine's memory to use. */
 export const usableMemoryMB = (name: MachineName) => machines[name].memoryMB - 16;
+
+/** The machines that are built, shipped and started. */
+export const inService = (Object.keys(machines) as MachineName[]).filter((name) => !machines[name].sealed);
+
+/** Whether `name` names a machine in service. */
+export const inServiceNamed = (name: string): name is MachineName => (inService as string[]).includes(name);
 
 export const cmdline = [
   // The kernel mounts the browser's filesystem as its root by itself.

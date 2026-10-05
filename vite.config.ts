@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import { feed, indexPage, postLinks, postPage, type Site } from "./scripts/lib/blog.ts";
 import { readPosts } from "./scripts/lib/content.ts";
-import { warpPipes } from "./scripts/lib/warp-pipes.ts";
 import { theme, themeCss } from "./src/theme.ts";
 
 // The terminal's palette (src/theme.ts) at the top of the page's head, as
@@ -87,7 +86,7 @@ function vmManifest(): Plugin {
 const relay = { [`/relay`]: { target: `ws://${process.env.RELAY ?? "127.0.0.1:8095"}`, ws: true } };
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), palette(), vmManifest(), blog(), warpPipes()],
+  plugins: [react(), tailwindcss(), palette(), vmManifest(), blog()],
   server: { proxy: relay },
   preview: { proxy: relay },
   build: {

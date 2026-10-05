@@ -1,14 +1,14 @@
 // The machine behind the terminal, one at a time. The first starts loading
-// the moment the page does; after that the guest's `workbench` and `home` ask
-// for the other one, and the screen powers down and up around the switch
+// the moment the page does; after that the guest may ask for another one in
+// service (vm.config.ts), and the screen powers down and up around the switch
 // (App.tsx). Whatever draws it watches it come up through the store.
 
 import wasm from "v86/build/v86.wasm?url";
 import manifest from "virtual:vm-manifest";
-import { type MachineName, machines, v86Options } from "../vm.config.ts";
+import { inServiceNamed, type MachineName, machines, v86Options } from "../vm.config.ts";
 import { pick, put } from "./drop.ts";
 import { Machine } from "./machine.ts";
-import { known, net, unwire as unwireNet } from "./net/index.ts";
+import { net, unwire as unwireNet } from "./net/index.ts";
 import { useMachine } from "./store.ts";
 import { opened, openLink, term } from "./terminal.ts";
 import { serial, unwire as unwireSerial } from "./serial/index.ts";
@@ -29,9 +29,9 @@ term.onData((data) => live && machine?.write(data));
 term.onBinary((data) => live && machine?.write(Uint8Array.from(data, (c) => c.charCodeAt(0))));
 term.onResize(({ cols, rows }) => live && machine?.resize(cols, rows));
 
-// The guest's `open`, `net`, `drop`, `workbench`/`home`, `adb`, `fastboot`,
-// `usb` and `serial` print a private escape sequence; see open.fish, net.fish,
-// drop.fish, workbench.fish, __usb.fish and serial.fish.
+// The guest's `open`, `net`, `drop`, `adb`, `fastboot`, `usb` and `serial`
+// print a private escape sequence; see open.fish, net.fish, drop.fish,
+// __usb.fish and serial.fish. `machine;<name>` asks for another machine.
 term.parser.registerOscHandler(7337, (data) => {
   const [verb, ...rest] = data.split(";");
   if (verb === "open") openLink(rest.join(";"));
@@ -39,9 +39,8 @@ term.parser.registerOscHandler(7337, (data) => {
   if (verb === "usb" && machine) void usb(rest[0] ?? "", machine);
   if (verb === "serial" && machine) void serial(rest[0] ?? "", machine);
   if (verb === "drop" && machine) pick(machine);
-  if (verb === "machine" && (rest[0] === "home" || rest[0] === "workbench") && rest[0] !== useMachine.getState().machine) {
-    useMachine.setState({ next: rest[0] });
-  }
+  const wanted = rest[0] ?? "";
+  if (verb === "machine" && inServiceNamed(wanted) && wanted !== useMachine.getState().machine) useMachine.setState({ next: wanted });
   return true;
 });
 
@@ -117,13 +116,9 @@ async function resume(started: Machine, name: MachineName) {
   );
 
   // Sets the guest's clock and time zone to the browser's (and, on a cold
-  // boot, starts the session); tells it whether this browser already has a
-  // WARP device. A cold-booted guest opens its control line after we got
-  // here, and says so: it is greeted again then.
-  const greet = () => {
-    started.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    if (known()) started.control("net known");
-  };
+  // boot, starts the session). A cold-booted guest opens its control line
+  // after we got here, and says so: it is greeted again then.
+  const greet = () => started.attach(Intl.DateTimeFormat().resolvedOptions().timeZone);
   started.onControl((line) => line === "ready" && greet());
 
   // The snapshot was taken with fish already at its prompt, so put back what
@@ -142,6 +137,6 @@ async function resume(started: Machine, name: MachineName) {
   useMachine.setState({ phase: "running" });
 }
 
-start(params.has("workbench") ? "workbench" : "home");
+start(params.has("workbench") && inServiceNamed("workbench") ? "workbench" : "home");
 
 if (import.meta.env.DEV) Object.assign(globalThis, { term, machine: () => machine });
