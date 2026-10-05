@@ -60,6 +60,7 @@
     "check:usb": "node scripts/check-usb.ts",
     "check:serial": "node scripts/check-serial.ts",
     "check:login": "node scripts/check-login.ts",
+    "check:writing": "node scripts/check-writing.ts",
     "shell": "node scripts/shell.ts",
     "warp": "node scripts/warp.ts"
   }

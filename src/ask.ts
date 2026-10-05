@@ -23,9 +23,11 @@ export class No extends Error {
 /** A topic's module answers its questions: lines to print, or a No. */
 export type Answers = (words: string[], machine: Machine) => Promise<string[] | void>;
 
-/** Each topic's module, loaded the first time the guest asks about it. */
-const topics: Record<string, () => Promise<{ answer: Answers }>> = {
-  net: () => import("./net/answers.ts"),
+/** What answers each topic, loaded the first time the guest asks about it. */
+const topics: Record<string, () => Promise<Answers>> = {
+  net: () => import("./net/answers.ts").then((module) => module.answer),
+  blog: () => import("./writing.ts").then((module) => module.blog),
+  moments: () => import("./writing.ts").then((module) => module.moments),
 };
 
 /** What the guest must know to ask: given to hostd when the page greets the machine. */
@@ -41,7 +43,7 @@ export async function ask(fields: string[], machine: Machine): Promise<void> {
     const words = rest.map((word) => decodeURIComponent(word));
     const load = topics[decodeURIComponent(topic)];
     if (!load) throw new No(`Nothing here knows about ${topic}.`);
-    lines = (await (await load()).answer(words, machine)) ?? [];
+    lines = (await (await load())(words, machine)) ?? [];
   } catch (error) {
     if (!(error instanceof No)) console.error("ask:", error);
     lines = [error instanceof No ? error.message : `Something went wrong: ${(error as Error).message}`];

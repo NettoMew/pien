@@ -77,11 +77,15 @@ function vmManifest(): Plugin {
 
 // The site's two services, as the live site reaches them (deploy/nginx.conf):
 // the relay (relay/) at <base>relay, for `net on`, and press (press/) at
-// <base>api/, for logging in. In development, ones running here — or,
-// through an SSH forward, somewhere else (RELAY=host:port, PRESS=host:port).
+// <base>api/, for logging in and writing, with the writing it renders at
+// <base>content/ (which nginx serves itself). In development, ones running
+// here — or, through an SSH forward, somewhere else (RELAY=host:port,
+// PRESS=host:port).
+const press = { target: `http://${process.env.PRESS ?? "127.0.0.1:8096"}` };
 const services = {
   "/relay": { target: `ws://${process.env.RELAY ?? "127.0.0.1:8095"}`, ws: true },
-  "/api": { target: `http://${process.env.PRESS ?? "127.0.0.1:8096"}` },
+  "/api": press,
+  "/content": press,
 };
 
 export default defineConfig({

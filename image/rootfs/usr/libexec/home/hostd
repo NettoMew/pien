@@ -23,6 +23,8 @@
 #   drop <n>         files from the visitor's computer wait in /.drop/<n>
 #                    (src/drop.ts): move them into ~/drop
 #   drop none        … or the visitor chose none
+#   content <n>      the site's writing, newer than the guest's, waits in
+#                    /.content/<n> (src/content.ts): put it in place
 #   ask <secret>     what the guest's questions to the page carry (src/ask.ts,
 #                    __ask.fish): kept where only the guest's commands read it
 #   said <id> <line> a line of the page's answer to question <id>
@@ -96,6 +98,30 @@ drop() {
 	rmdir "/.drop/$1"
 	chown guest:guest /home/guest/drop
 	echo "$1" > /run/drop/state
+}
+
+# The site's writing, newer than the guest's: home/ holds the files new or
+# changed, as they go in the guest's home; gone lists those the site no
+# longer has; posts, if there, is the list `blog` shows. Each is a rename,
+# and the bytes come from the site as they are read, as with dropped files.
+content() {
+	case $1 in "" | *[!0-9]*) return ;; esac
+	src=/.content/$1
+	while IFS= read -r path; do
+		case $path in
+		blog/* | moments/* | media/* | about.md) rm -f "/home/guest/$path" ;;
+		esac
+	done < "$src/gone"
+	(cd "$src/home" && find . -type f) | while IFS= read -r path; do
+		path=${path#./}
+		mkdir -p "$(dirname "/home/guest/$path")"
+		mv -f "$src/home/$path" "/home/guest/$path"
+	done
+	[ -f "$src/posts" ] && mv -f "$src/posts" /usr/share/home/posts
+	for path in blog moments media about.md; do
+		[ -e "/home/guest/$path" ] && chown -R guest:guest "/home/guest/$path"
+	done
+	rm -rf "$src"
 }
 
 stty -echo
@@ -174,6 +200,7 @@ while read -r cmd arg; do
 		esac
 		;;
 	drop) drop "$arg" ;;
+	content) content "$arg" ;;
 	ask)
 		(umask 077 && echo "$arg" > /run/ask/secret)
 		chown guest:guest /run/ask/secret

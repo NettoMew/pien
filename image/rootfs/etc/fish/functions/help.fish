@@ -2,6 +2,7 @@ function help --description 'What this machine can do'
     set -l rows \
         'ls  cd  tree  grep' 'real commands, go ahead' \
         blog 'the posts' \
+        moments 'what has been happening' \
         'cat post.md' 'read one, typeset' \
         'open post.md' 'read it as a web page' \
         'fastfetch  htop' 'look at this machine' \

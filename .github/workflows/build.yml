@@ -48,6 +48,7 @@ jobs:
       - run: npm run lint
       - run: npm run build # type-checks first
       - run: npm run check:login # passkeys and relays, in Chrome, against the build
+      - run: npm run check:writing # posts, pictures and moments from inside the machine
 
       - name: Smoke test
         run: |

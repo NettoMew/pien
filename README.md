@@ -24,6 +24,7 @@ npm run dev            # http://localhost:5173
 | `npm test --prefix press` | press 的测试：软件实现的通行密钥、模拟的 GitHub、和中继对齐的 token |
 | `PRESS=host:port npm run dev` | 开发服务器把 `/api/` 转给那里的 press（默认 127.0.0.1:8096，见 docs/login.md） |
 | `npm run check:login` | 先 `npm run build`：本机起中继和 press，Chrome 的虚拟认证器扮通行密钥，在客户机里把登录和中继走一遍 |
+| `npm run check:writing` | 同样先 `npm run build`：在客户机里写一篇带图的文章、发布、发一条动态，再换一台刚恢复的机器看它们在不在 |
 
 页面加 `?cold` 会冷启动内核，而不是恢复快照（调试用）。
 
@@ -56,19 +57,21 @@ npm run dev            # http://localhost:5173
 
 **串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，用 tio 连。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。
 
-**排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点。输出到管道时仍然是原文。
+**排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点，单独一行的图片直接画在终端里（iTerm2 的内联图片序列，页面用 `@xterm/addon-image` 画）。输出到管道时仍然是原文。
 
-**网页版**（`scripts/lib/blog.ts`）。每篇文章同时生成一个纯静态页面 `/blog/<文章>/`，再加上 `/blog/` 列表和 `/feed.xml`，给搜索引擎、分享链接和 `open` 用。页面没有 JavaScript：顶上是 fish 会打出的那行提示符，正文用 Tailwind Typography 排版，配色和终端相同，和 `cat` 在终端里排的一样。它们的样式表 `src/blog.css` 是单独的构建入口，只收这些页面用到的类。首页的 `<noscript>` 里也列着文章。
+**写作**（`press/src/writing.ts`、`src/writing.ts`，[docs/writing.md](docs/writing.md)）。站长登录后在机器里写：`blog edit <名字>` 在编辑器里写文章，草稿存在服务器上，拖进来的图片随草稿送去（摆正、去掉 EXIF、存成 JPEG），`blog publish` 发布；`moments new` 发一条动态（`now.md` 已经并进动态）。press 把发布的内容放在一个 git 仓库里，一次一个提交，再渲染出网页和 `/content/`。页面打开时比较服务器的内容索引和机器构建时的那份，只把差别作为按需下载的文件铺进 `~`，所以不用重建虚拟机，访客的机器里也是最新的。
+
+**网页版**（`scripts/lib/blog.ts`）。每篇文章同时生成一个纯静态页面 `/blog/<文章>/`，再加上 `/blog/` 列表、`/moments/` 动态和 `/feed.xml`，给搜索引擎、分享链接和 `open` 用；构建时生成一份，press 在内容变化时再渲染一份，nginx 优先用后者，图片按屏幕宽度从三种 WebP 里选。页面没有 JavaScript：顶上是 fish 会打出的那行提示符，正文用 Tailwind Typography 排版，配色和终端相同，和 `cat` 在终端里排的一样。它们的样式表 `src/blog.css` 是单独的构建入口，只收这些页面用到的类。首页的 `<noscript>` 里也列着文章。
 
 **缓存**。`/vm/` 和 `/assets/` 下的文件名都带内容哈希，可以永久缓存（`public/_headers`）。当前用的是哪些文件名，构建时直接打进页面的 JS 里，访问时不用先问服务器。
 
 ## 写文章
 
-放进 `content/blog/`，front matter 写 `title`、`date`、`tags`，然后 `npm run build:vm`。`content/` 整体对应客户机里的 `~`。
+在机器里写：登录后 `blog edit <名字>`、`blog publish <名字>`，动态用 `moments new`（见 [docs/writing.md](docs/writing.md)）。仓库里的 `content/` 是种子：镜像按它构建，服务器上的内容仓库也从它开始；它整体对应客户机里的 `~`，改了要 `npm run build:vm`。
 
 ## 部署
 
-`.github/workflows/build.yml` 会从零构建整站（内核、镜像、快照、页面），用 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on` 和登录还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署2026-10-05101) 和 [docs/login.md](docs/login.md#部署101)）。
+`.github/workflows/build.yml` 会从零构建整站（内核、镜像、快照、页面），用 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on`、登录和写作还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们，并直接提供 press 渲染出的 `/content/` 和网页（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署2026-10-05101)、[docs/login.md](docs/login.md#部署101) 和 [docs/writing.md](docs/writing.md#部署101)）。
 
 ## 实测
 
@@ -84,7 +87,7 @@ npm run dev            # http://localhost:5173
 
 ## 接下来
 
-待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)，登录见 [docs/login.md](docs/login.md)；串口见 [docs/serial.md](docs/serial.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
+待办和优先级见 [TODO.md](TODO.md)；联网见 [docs/relay.md](docs/relay.md)，登录见 [docs/login.md](docs/login.md)，写作见 [docs/writing.md](docs/writing.md)；串口见 [docs/serial.md](docs/serial.md)；封存的工作台和 WARP 见 [docs/workbench.md](docs/workbench.md)、[docs/warp.md](docs/warp.md)。
 
 ## 踩过的坑
 

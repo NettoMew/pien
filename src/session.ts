@@ -7,6 +7,7 @@ import wasm from "v86/build/v86.wasm?url";
 import manifest from "virtual:vm-manifest";
 import { downloads, inServiceNamed, type MachineName, machines, v86Options } from "../vm.config.ts";
 import { ask, secret } from "./ask.ts";
+import { lay } from "./content.ts";
 import { pick, put } from "./drop.ts";
 import { Machine } from "./machine.ts";
 import { net, unwire as unwireNet } from "./net/index.ts";
@@ -144,6 +145,8 @@ async function resume(started: Machine, name: MachineName) {
   started.resize(term.cols, term.rows); // fish redraws its prompt to fit
   greet();
   useMachine.setState({ phase: "running" });
+  // What was published since the machine was built: its home catches up.
+  void lay(started);
 }
 
 start(params.has("workbench") && inServiceNamed("workbench") ? "workbench" : "home");
