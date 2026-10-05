@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant as Clock};
 
 use futures_util::{SinkExt, StreamExt};
-use relay::channel::{self, Connecting, HELLO, WELCOME};
-use relay::{Config, Shared, server};
+use relay::channel::{Connecting, HELLO, WELCOME};
+use relay::{Config, Shared, server, token};
 use smoltcp::iface::{Config as IfaceConfig, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{ChecksumCapabilities, Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::{tcp, udp};
@@ -26,6 +26,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_tungstenite::tungstenite::Message;
 
 const KEY: [u8; 32] = [0x11; 32];
+const SESSION_KEY: [u8; 32] = [0x33; 32];
 const SERVICES: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const GUEST_MAC: EthernetAddress = EthernetAddress([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
 const BULK: usize = 16 << 20;
@@ -40,6 +41,7 @@ async fn relay_with(more: &str) -> SocketAddr {
         r#"
         listen = "127.0.0.1:0"
         key = "{}"
+        session_key = "{}"
         [dns]
         upstream = "127.0.0.1"
         hosts = {{ "test.home" = "{SERVICES}" }}
@@ -47,7 +49,8 @@ async fn relay_with(more: &str) -> SocketAddr {
         aliases = {{ "{SERVICES}" = "127.0.0.1" }}
         {more}
         "#,
-        "11".repeat(32)
+        "11".repeat(32),
+        "33".repeat(32)
     ))
     .unwrap();
     let (address, serving) = server::bind(Shared::new(config).unwrap()).await.unwrap();
@@ -55,13 +58,22 @@ async fn relay_with(more: &str) -> SocketAddr {
     address
 }
 
-/// Opens the channel the way the page does; `None` if the relay turns us away.
+/// Opens the channel the way the page does with a relay's own key; `None` if
+/// the relay turns us away.
 async fn connect(relay: SocketAddr, key: [u8; 32]) -> Option<Guest> {
+    open(relay, Connecting::new(), key).await
+}
+
+/// Opens the channel the way the page does with the site's login.
+async fn log_in(relay: SocketAddr, token: &[u8], key: [u8; 32]) -> Option<Guest> {
+    open(relay, Connecting::with_token(token), key).await
+}
+
+async fn open(relay: SocketAddr, (hello, connecting): (Vec<u8>, Connecting), key: [u8; 32]) -> Option<Guest> {
     let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{relay}/relay"))
         .await
         .unwrap();
     let (mut sink, mut source) = ws.split();
-    let (hello, connecting) = Connecting::new();
     sink.send(Message::binary(hello)).await.unwrap();
     let reply = binary(&mut source).await?;
     let (mut sealer, mut opener) = connecting.finish(&key, &reply)?;
@@ -547,7 +559,27 @@ async fn a_wrong_key_is_turned_away() {
     let relay = relay().await;
     assert!(connect(relay, [0x22; 32]).await.is_none());
     assert!(connect(relay, KEY).await.is_some());
-    let _ = channel::key; // the same derivation `net login` uses; see channel.rs
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_lets_the_site_in() {
+    let (relay, count) = (relay().await, count_server().await);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let token = token::issue(&SESSION_KEY, now + 3600, [5; 16]);
+    let key = token::channel_key(&SESSION_KEY, &token, now).unwrap();
+    let mut guest = log_in(relay, &token, key).await.expect("a fresh login");
+    let handle = guest.tcp((SERVICES, count));
+    guest
+        .until(Duration::from_secs(10), |g| g.socket(handle).may_send().then_some(()))
+        .await
+        .expect("a connection through it");
+
+    let expired = token::issue(&SESSION_KEY, now - 1, [5; 16]);
+    let key = token::channel_key(&SESSION_KEY, &expired, now - 2).unwrap();
+    assert!(log_in(relay, &expired, key).await.is_none());
+    let forged = token::issue(&[0x44; 32], now + 3600, [5; 16]);
+    let key = token::channel_key(&[0x44; 32], &forged, now).unwrap();
+    assert!(log_in(relay, &forged, key).await.is_none());
 }
 
 // ─── R3: egress through SOCKS5, limits, closed UDP ports ─────────────────────

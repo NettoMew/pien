@@ -1,11 +1,11 @@
 //! WebSockets in, sessions out. Each connection opens the channel (channel.rs)
-//! first; only a page that knows the key gets a session. Behind a TLS
+//! first; only a page with the relay's key, or the site's login, gets a session. Behind a TLS
 //! terminator, any path will do — the terminator decides which reach us.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
@@ -50,7 +50,8 @@ async fn connection(shared: Arc<Shared>, stream: TcpStream) {
     // The channel: a hello, our reply, then a sealed "hello" proves the key.
     let opened = tokio::time::timeout(HANDSHAKE, async {
         let hello = next(&mut source).await?;
-        let (reply, mut opener, sealer) = channel::accept(&shared.key, &hello)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
+        let (reply, mut opener, sealer) = channel::accept(&shared.keys, &hello, now)?;
         sink.send(Message::binary(reply)).await.ok()?;
         let proof = next(&mut source).await?;
         (opener.open(&proof)? == HELLO).then_some((opener, sealer))

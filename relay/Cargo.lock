@@ -1000,16 +1000,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pbkdf2"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "112d82ceb8c5bf524d9af484d4e4970c9fd5a0cc15ba14ad93dccd28873b0629"
-dependencies = [
- "digest",
- "hmac",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1149,9 +1139,9 @@ dependencies = [
  "getrandom 0.3.4",
  "hickory-resolver",
  "hkdf",
+ "hmac",
  "libc",
  "p256",
- "pbkdf2",
  "serde",
  "sha2",
  "smoltcp",

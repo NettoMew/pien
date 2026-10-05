@@ -24,12 +24,13 @@ mod policy;
 mod reports;
 pub mod server;
 pub mod session;
+pub mod token;
 
 pub use config::Config;
 
 pub struct Shared {
     pub config: Config,
-    pub key: [u8; 32],
+    pub keys: channel::Keys,
     dns: dns::Dns,
     pub stats: Stats,
 }
@@ -45,11 +46,11 @@ pub struct Stats {
 
 impl Shared {
     pub fn new(config: Config) -> Result<Arc<Self>, String> {
-        let key = config.key()?;
+        let keys = config.keys()?;
         let dns = dns::Dns::new(&config.dns)?;
         Ok(Arc::new(Self {
             config,
-            key,
+            keys,
             dns,
             stats: Stats::default(),
         }))

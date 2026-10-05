@@ -1,9 +1,14 @@
-# The relay's configuration on the server (see relay/src/config.rs for all
-# settings). The key comes from `relay key`, fed the password that `net login`
-# will be given; keep this file readable by the relay's user (65534) only.
+# The site's relay on the server (see relay/src/config.rs for all settings).
+# It takes the owner's login: session_key is the key press signs logins with
+# (deploy/press.env.example), the same 64 hex digits in both places. Keep this
+# file readable by the relay's user (65534) only.
+#
+# A relay of your own, for `net relay <address>` from any page, takes
+# `key = "…"` instead: 64 hex digits from `relay key`, pasted into the page
+# once.
 
 listen = "0.0.0.0:8095"
-key = "64 hex digits from: relay key"
+session_key = "64 hex digits, as in press's session key file"
 
 [limits]
 sessions = 4

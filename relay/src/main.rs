@@ -1,19 +1,19 @@
 //! relay [relay.toml]    serve, with the given configuration (see config.rs)
-//! relay key             read a password on stdin, print the key it makes —
-//!                       for relay.toml; the guest's `net login` derives the same
+//! relay key             print a new random key for relay.toml: `key` for a
+//!                       relay of one's own (pasted into the page once, at
+//!                       `net relay`), or the site's `session_key`
 
 use std::sync::atomic::Ordering;
 
 use relay::server::{self, bytes};
-use relay::{Config, Shared, channel};
+use relay::{Config, Shared};
 
 #[tokio::main]
 async fn main() {
     let arg = std::env::args().nth(1);
     if arg.as_deref() == Some("key") {
-        let mut password = String::new();
-        std::io::stdin().read_line(&mut password).expect("a password on stdin");
-        let key = channel::key(password.trim_end_matches(['\r', '\n']));
+        let mut key = [0u8; 32];
+        getrandom::fill(&mut key).expect("the OS has randomness");
         return println!("{}", key.iter().map(|b| format!("{b:02x}")).collect::<String>());
     }
 
