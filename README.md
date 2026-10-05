@@ -17,6 +17,7 @@ npm run dev            # http://localhost:5173
 | `npm run shell -- --put 本地路径=/mnt/x -c "..."` | 先把本地文件放进客户机再跑，改脚本不用重建镜像（Git Bash 下要设 `MSYS_NO_PATHCONV=1`） |
 | `npm run smoke [url]` | 用本机 Chrome 端到端测一遍，截图在 `.cache/smoke/` |
 | `npm run check:serial` | 给机器插几根假的串口线：一根 USB 转串口线，用客户机里的 stty、tio、python3 把速度、帧格式、数据和各条信号线走一遍；一块停在 U-Boot `loady` 的板子，`sb` 往里传文件；一个蓝牙串口，走远再回来（见 [docs/serial.md](docs/serial.md)） |
+| `npm run check:ble` | 给机器几台假的蓝牙 LE 设备：Nordic UART、HM-10、自定的服务，经 `/dev/ttyBLE0` 往返字节，走远再回来（见 [docs/serial.md](docs/serial.md)） |
 | `npm run check:usb` | 给机器插一台假手机，让客户机里真正的 adb 和 fastboot 经页面的桥对它走一遍（见 [docs/workbench.md](docs/workbench.md)） |
 | `npm run lint` / `npm run typecheck` / `npm run build` | oxlint / 类型检查 / 先类型检查再生产构建，产物在 `dist/` |
 | `cargo test --manifest-path relay/Cargo.toml` | 中继的测试：一台 smoltcp 访客经真实的 WebSocket 连进中继 |
@@ -56,7 +57,7 @@ npm run dev            # http://localhost:5173
 
 **工作台**（`image/workbench/`，已封存）。一台 768 MB 的大机器，带一块按需读取的工具链盘：gcc、clang、Rust、Go、Python、Node，配好的 Neovim。
 
-**串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，配对过的蓝牙串口成了 `/dev/rfcomm0`，用 tio 连。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。lrzsz、esptool、mpremote、stm32flash、avrdude 都在，用到串口时自己去借。
+**串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，配对过的蓝牙串口成了 `/dev/rfcomm0`，用 tio 连；`ble` 经 Web Bluetooth 连蓝牙 LE 的串口模块（Nordic UART、HM-10 这些），成了 `/dev/ttyBLE0`。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。lrzsz、esptool、mpremote、stm32flash、avrdude 都在，用到串口时自己去借。
 
 **排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点，单独一行的图片直接画在终端里（iTerm2 的内联图片序列，页面用 `@xterm/addon-image` 画）。输出到管道时仍然是原文。
 
@@ -121,6 +122,8 @@ npm run dev            # http://localhost:5173
 - **9p 的 `cache=loose` 看不到页面新加的文件**：客户机记得目录里有什么。拖进来的文件先放进一个它从没见过的目录，再由 hostd 改名搬进 `~/drop`。
 - **fish 第一次启动会跑 Python**：fish 4 把从手册页生成补全的脚本编进了自己的二进制，第一次交互启动时只要有 python3 就在后台跑它，排除 `/usr/share/fish/tools` 也拦不住。镜像里没有手册页，这一趟白跑，还把 5 MB 的 libpython 留在快照里（home 的快照因此从 5.4 MB 涨到 6.8 MB）。`/etc/rc` 先建好它要填的目录 `~/.cache/fish/generated_completions`，它就不跑了。
 - **Web Serial 只在打开时收速度**：改速度、帧格式都得把串口关了再按新设置打开。客户机的 8250 驱动每次改完设置，最后一步都是在关上分频锁存的情况下写一次线路控制寄存器；页面在 v86 的这个寄存器字段上装了一个访问器，正好在这一刻知道该重开了，用不着轮询。
+- **v86 的 UART 把收到的字节全攒着**：串口没有程序开着时，真的 16550 收满 16 字节的 FIFO 就丢，驱动打开时还会清空；v86 不管 FIFO 的清空位，收到多少攒多少，一台不停说话的设备能把内存攒满，下一个打开串口的程序先读到一大堆旧字节。页面看着 OUT2（驱动开着串口时拉高）：没人开着，字节就不往里送。
+- **内核不认第四个串口**：x86 上 COM4 的探测要做回环测试，COM1 到 COM3 都跳过。v86 的 UART 回环只回字节、不把 DTR、RTS 回到 CTS、DSR 上，测试不过，ttyS3 的节点在、口却是空的。`/etc/rc` 用 `setserial /dev/ttyS3 uart 16550A` 告诉它。
 - **16550 的速度只到 115200**：默认时钟除以 16 再除以分频，分频最小是 1。`/etc/rc` 用 `setserial` 把 ttyS2 的时钟调高到 24 MHz（除以 16 之后），1500000、3000000 都成了整数分频；差一点点的（115200 这类）由页面对回标准速度。
 - **Web Serial 丢了设备时不出声**：读流出错后 `port.readable` 变成 null，读循环就静静地停了。USB 线还有 `disconnect` 事件报信，蓝牙设备走远了什么事件也没有，要到客户机下次写才会发现。读循环现在在流一个也不剩时报“坏了”，蓝牙的由页面隔一会儿重开。
 - **装好的 Python 包会在每次运行时重编字节码**：客户机里的访客写不了 `/usr/lib/python3.14`，`__pycache__` 写不进去，每次 import 都在模拟的 CPU 上从源码编一遍。Alpine 的字节码在单独的 `-pyc` 包里，靠 install_if 跟着 `pyc` 装，镜像的依赖解析因此学会了 install_if；`image/tools/python/` 装的几个包，构建时用不核对源码时间的字节码（`unchecked-hash`）编好。

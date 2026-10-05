@@ -22,6 +22,9 @@
 #                    wire, rfcomm0 for Bluetooth
 #   serial down <why>
 #                    it went away, or was let go
+#   ble up <name>    a Bluetooth LE serial device of the visitor's is attached
+#                    (src/ble/): /dev/ttyBLE0 leads to it
+#   ble down <why>   it went away, or was let go
 #   drop <n>         files from the visitor's computer wait in /.drop/<n>
 #                    (src/drop.ts): move them into ~/drop
 #   drop none        … or the visitor chose none
@@ -201,6 +204,20 @@ while read -r cmd arg; do
 			shift
 			rm -f /dev/ttyUSB0 /dev/rfcomm0
 			echo "down $*" > /run/serial/state
+			;;
+		esac
+		;;
+	ble)
+		# The name is the device's own, which anyone near can make anything:
+		# taken whole, never split or expanded.
+		case $arg in
+		up\ *)
+			ln -sf ttyS3 /dev/ttyBLE0
+			printf 'up /dev/ttyBLE0 %s\n' "${arg#up }" > /run/ble/state
+			;;
+		down\ *)
+			rm -f /dev/ttyBLE0
+			printf 'down %s\n' "${arg#down }" > /run/ble/state
 			;;
 		esac
 		;;

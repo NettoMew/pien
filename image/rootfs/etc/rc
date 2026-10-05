@@ -46,6 +46,17 @@ mkdir -p /run/serial
 echo off > /run/serial/state
 chmod 666 /run/serial/state
 
+# A Bluetooth LE device's serial service (src/ble/, hostd): the fourth UART.
+# Its speed means nothing: the bytes go as fast as Bluetooth carries them.
+# The kernel probes COM4 with the loopback test it spares COM1 to COM3, and
+# v86's UART loops bytes back but not the modem lines, so the kernel leaves
+# the port unclaimed: it is told what the port is.
+setserial /dev/ttyS3 uart 16550A
+chown guest /dev/ttyS3
+mkdir -p /run/ble
+echo off > /run/ble/state
+chmod 666 /run/ble/state
+
 # Files the visitor drops on the page, or picks for `drop` (see hostd).
 mkdir -p /run/drop
 echo none > /run/drop/state

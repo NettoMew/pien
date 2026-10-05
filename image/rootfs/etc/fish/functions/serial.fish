@@ -4,7 +4,7 @@ function serial --description "A serial port on this computer, wired or over Blu
     set -l n (set_color normal)
     switch "$argv[1]"
         case '' --uuid
-            if test "$argv[1]" = --uuid; and not string match -qr '^[0-9A-Fa-f-]{4,36}$' -- "$argv[2]"
+            if test "$argv[1]" = --uuid; and test -z "$argv[2]"
                 echo 'serial: usage: serial --uuid <the RFCOMM service'"'"'s UUID>' >&2
                 return 1
             end
@@ -18,12 +18,7 @@ function serial --description "A serial port on this computer, wired or over Blu
                 echo $dim"  tio -b 115200 $device · serial off"$n
             end
         case off
-            printf '\e]7337;serial;off\a' >/dev/tty
-            for i in (seq 25)
-                read -l line </run/serial/state
-                string match -q 'up *' -- $line; or break
-                sleep 0.2
-            end
+            __let_go serial
             echo $dim'  Let go.'$n
         case '*'
             echo 'serial: usage: serial [--uuid <UUID> | off]' >&2

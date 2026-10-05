@@ -13,6 +13,7 @@
 // guest's ttyS2 stays as it was all the while, so tio, say, carries on.
 
 import { Cable } from "lucide-react";
+import { isUuid, uuid } from "../bluetooth.ts";
 import { gesture } from "../gesture.ts";
 import type { Machine, ModemStatus, SerialLine } from "../machine.ts";
 
@@ -67,13 +68,6 @@ const sameFraming = (a: SerialOptions, b: SerialOptions) =>
 
 /** The standard serial service, the serial port profile (SPP). */
 const SPP = uuid(0x1101);
-
-/** A Bluetooth service class ID in full, from a 16- or 32-bit one (as a number or in hex) or a whole UUID. */
-function uuid(id: number | string) {
-  if (typeof id === "string" && !/^[0-9a-f]{1,8}$/i.test(id)) return id.toLowerCase();
-  const short = typeof id === "number" ? id.toString(16) : id.toLowerCase();
-  return `${short.padStart(8, "0")}-0000-1000-8000-00805f9b34fb`;
-}
 
 /** The Bluetooth service `port` is, in full, or nothing for a wire. */
 const service = (port: SerialPort) => {
@@ -251,6 +245,7 @@ let joining = Promise.resolve();
 export async function open(machine: Machine, id?: string) {
   const serial = navigator.serial as Serial | undefined;
   if (!serial) return down(machine, "unsupported");
+  if (id && !isUuid(id)) return down(machine, "invalid");
   watch(serial);
   asking = machine;
   if (link) return up(machine, link.port);
@@ -284,7 +279,7 @@ export async function release(machine?: Machine) {
 function join(port: SerialPort, machine: Machine, quietly = false) {
   const turn = joining.then(async () => {
     if (link) return true;
-    const joined: Link = new Link(port, machine.serial(), (error) => void broken(joined, error));
+    const joined: Link = new Link(port, machine.serial(2), (error) => void broken(joined, error));
     try {
       await joined.open();
     } catch (error) {

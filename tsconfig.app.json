@@ -4,7 +4,7 @@
     "target": "es2024",
     "lib": ["ES2024", "DOM"],
     "module": "esnext",
-    "types": ["vite/client", "w3c-web-usb", "w3c-web-serial"],
+    "types": ["vite/client", "w3c-web-usb", "w3c-web-serial", "web-bluetooth"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

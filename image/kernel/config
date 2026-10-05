@@ -46,13 +46,14 @@ CONFIG_DEVTMPFS_MOUNT=y
 
 # Terminals: ttyS0 for the kernel log, ttyS1 for the control line, ttyS2 for
 # a serial port lent from the visitor's computer (it shares COM1's IRQ, as
-# COM3 does), hvc0 for the visitor
+# COM3 does), ttyS3 for a Bluetooth LE serial device of the visitor's (it
+# shares COM2's, as COM4 does), hvc0 for the visitor
 CONFIG_TTY=y
 CONFIG_UNIX98_PTYS=y
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
-CONFIG_SERIAL_8250_NR_UARTS=3
-CONFIG_SERIAL_8250_RUNTIME_UARTS=3
+CONFIG_SERIAL_8250_NR_UARTS=4
+CONFIG_SERIAL_8250_RUNTIME_UARTS=4
 CONFIG_SERIAL_8250_EXTENDED=y
 CONFIG_SERIAL_8250_SHARE_IRQ=y
 CONFIG_VIRTIO_MENU=y
