@@ -15,6 +15,14 @@ tags: [meta]
 - 无序列表
 - 嵌套之前的最后一项
 
+## 表格
+
+| 命令 | 做什么 | 用时 |
+|---|---|--:|
+| `net on` | 经中继联网，拿到一个自己的 IPv6 地址 | 2.3 秒 |
+| `cat` 一篇文章 | 在终端里排版，表格和代码都在内 | 即时 |
+| `take` | 把机器里的文件存到电脑上 | 1 秒 |
+
 ## 代码
 
 ```c
@@ -23,6 +31,12 @@ static int __init curious_init(void)
 	pr_info("hello from %s\n", "guest");
 	return 0;
 }
+```
+
+```fish
+function hello --description 'say hi'
+    echo "hello from $hostname" # fish knows where it runs
+end
 ```
 
 ## 引用

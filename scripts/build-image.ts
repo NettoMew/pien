@@ -17,6 +17,7 @@ import config from "../image/image.config.ts";
 import { BLOBS } from "../vm.config.ts";
 import { Repository } from "./lib/apk.ts";
 import { frontMatter, indexOf, readWriting } from "./lib/content.ts";
+import { guestTable } from "./lib/syntax.ts";
 import { cached } from "./lib/fetch.ts";
 import { kernelBuild } from "./lib/kernel.ts";
 import { libraries } from "./lib/libraries.ts";
@@ -110,6 +111,8 @@ rootfs.write(
   `NAME="Alpine Linux"\nID=alpine\nVERSION_ID=${alpine}\n` +
     `PRETTY_NAME="Alpine Linux v${config.branch.slice(1)}"\nHOME_URL="https://alpinelinux.org/"\n`,
 );
+// What md.awk colours code by: the rules the web pages colour it with.
+rootfs.write("/usr/libexec/home/syntax", guestTable());
 info(`Alpine ${alpine} · ${commands.size} commands`);
 
 // ─── Content ─────────────────────────────────────────────────────────────────
