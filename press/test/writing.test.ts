@@ -26,7 +26,10 @@ async function press() {
   };
   await mkdir(join(places.store, "blog"), { recursive: true });
   await mkdir(join(places.store, "moments"), { recursive: true });
-  await writeFile(join(places.store, "blog/hello.md"), "---\ntitle: Hello\ndate: 2026-10-04\n---\n\nThe first.\n");
+  await writeFile(
+    join(places.store, "blog/hello.md"),
+    "---\ntitle: Hello\ndate: 2026-10-04\ntags: [meta]\n---\n\nThe first.\n\n```c\nint main(void) { return 0; }\n```\n",
+  );
   await writeFile(join(places.store, "moments/2026-10-04.md"), "---\ndate: 2026-10-04\n---\n\nNow.\n");
   await mkdir(join(places.dist, ".vite"), { recursive: true });
   await writeFile(join(places.dist, ".vite/manifest.json"), JSON.stringify({ "src/blog.css": { file: "assets/blog-test.css" } }));
@@ -67,6 +70,25 @@ test("the writing as it was: a repository, the index, the pages", async () => {
   assert.match(await page("feed.xml"), /<link>https:\/\/arc.moe\/blog\/hello\/<\/link>/);
   assert.equal((await call("GET", "/content/index.json", { anyone: true })).status, 200);
   assert.equal((await call("GET", "/content/../../etc/passwd", { anyone: true })).status, 404);
+});
+
+test("the pages say how to be shared, and where they all are", async () => {
+  const { places, page } = await press();
+  const post = await page("blog/hello/index.html");
+  assert.match(post, /<link rel="canonical" href="https:\/\/arc.moe\/blog\/hello\/">/);
+  assert.match(post, /<meta property="og:type" content="article">/);
+  assert.match(post, /<meta property="article:tag" content="meta">/);
+  // Its card, beside it, named by what it shows: a PNG, 1200 by 630.
+  const card = /<meta property="og:image" content="https:\/\/arc.moe\/(blog\/hello\/card-[0-9a-f]{10}\.png)">/.exec(post)?.[1];
+  assert.ok(card, "a card for the post");
+  const { format, width, height } = await sharp(await readFile(join(places.public, "pages", card))).metadata();
+  assert.deepEqual([format, width, height], ["png", 1200, 630]);
+  assert.match(await page("blog/index.html"), /og:image" content="https:\/\/arc.moe\/blog\/card-[0-9a-f]{10}\.png"/);
+  // Code coloured as `cat` colours it in the terminal.
+  assert.match(post, /<pre data-lang="c"><code><span class="text-magenta">int<\/span> <span class="text-blue">main<\/span>/);
+  const sitemap = await page("sitemap.xml");
+  assert.match(sitemap, /<url><loc>https:\/\/arc.moe\/blog\/hello\/<\/loc><lastmod>2026-10-04<\/lastmod><\/url>/);
+  assert.match(sitemap, /<url><loc>https:\/\/arc.moe\/moments\/<\/loc><lastmod>2026-10-04<\/lastmod><\/url>/);
 });
 
 test("drafts are the owner's alone, and kept out of the repository", async () => {

@@ -6,7 +6,8 @@
 //   content/files/<sha256>          every file of it as the guest's home holds it
 //   content/media/<name>-<w>.webp   pictures at the widths the web asks for
 //   content/media/<name>.jpg        and at the guest's (pictures.ts)
-//   pages/                          blog/, moments/, feed.xml (scripts/lib/blog.ts)
+//   pages/                          blog/, moments/, their share cards, feed.xml,
+//                                   sitemap.xml (scripts/lib/blog.ts)
 //
 // Files named by their content are written once and kept. The pages are made
 // whole beside the ones being served, then put in their place.
@@ -54,9 +55,9 @@ export async function render(writing: Written[], out: string, site: Site, styles
 
   const fresh = join(out, "pages.new");
   await rm(fresh, { recursive: true, force: true });
-  for (const [path, html] of pages(site, stylesheet, writing, (name) => pictures.get(name))) {
+  for (const [path, data] of await pages(site, stylesheet, writing, (name) => pictures.get(name))) {
     await mkdir(dirname(join(fresh, path)), { recursive: true });
-    await writeFile(join(fresh, path), html);
+    await writeFile(join(fresh, path), data);
   }
   await rm(join(out, "pages.old"), { recursive: true, force: true });
   if (existsSync(join(out, "pages"))) await rename(join(out, "pages"), join(out, "pages.old"));

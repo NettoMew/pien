@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
-import { pages, postLinks, type Site } from "./scripts/lib/blog.ts";
+import { homepage, pages, postLinks, robots, type Site } from "./scripts/lib/blog.ts";
 import { readWriting } from "./scripts/lib/content.ts";
 import { theme, themeCss } from "./src/theme.ts";
 
@@ -20,26 +20,41 @@ function palette(): Plugin {
   };
 }
 
-// The writing in content/ as web pages (blog/, blog/<slug>/, moments/) and a
-// feed (feed.xml): rendered per request in dev, written out by the build. On
-// the server, press renders them anew from its store whenever the writing
-// changes, with this build's stylesheet, which it finds in Vite's manifest
-// (below). The homepage's <noscript> lists the posts too.
+// The writing in content/ as web pages (blog/, blog/<slug>/, moments/), each
+// with the card it shows where it is shared, a feed (feed.xml) and a sitemap:
+// rendered per request in dev, written out by the build. On the server,
+// press renders them anew from its store whenever the writing changes, with
+// this build's stylesheet, which it finds in Vite's manifest (below). The
+// homepage gets its card and share tags here, its <noscript> lists the
+// posts, and robots.txt says where the sitemap is.
 const BLOG_CSS = "src/blog.css";
+
+const TYPES: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  xml: "application/xml; charset=utf-8",
+  png: "image/png",
+  txt: "text/plain; charset=utf-8",
+};
 
 function blog(): Plugin {
   let site: Site;
-  const all = async (stylesheet: string) => pages(site, stylesheet, await readWriting());
+  const all = async (stylesheet: string) => {
+    const home = await homepage(site);
+    return new Map([...(await pages(site, stylesheet, await readWriting())), [home.card.path, home.card.png], ["robots.txt", robots(site)]]);
+  };
   return {
     name: "blog",
     configResolved: (config) => void (site = { base: config.base, url: (process.env.SITE_URL ?? "").replace(/\/$/, "") }),
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = decodeURIComponent((req.url ?? "/").split("?")[0]!).slice(site.base.length);
+        if (!path) return next();
         const rendered = await all(`${site.base}${BLOG_CSS}`);
-        const body = rendered.get(path) ?? rendered.get(`${path.replace(/\/$/, "")}/index.html`);
+        const found = rendered.has(path) ? path : `${path.replace(/\/$/, "")}/index.html`;
+        const body = rendered.get(found);
         if (!body) return next();
-        res.setHeader("Content-Type", path.endsWith(".xml") ? "application/rss+xml; charset=utf-8" : "text/html; charset=utf-8");
+        const type = found === "feed.xml" ? "application/rss+xml; charset=utf-8" : TYPES[found.split(".").pop()!];
+        res.setHeader("Content-Type", type ?? "application/octet-stream");
         res.end(body);
       });
     },
@@ -50,7 +65,8 @@ function blog(): Plugin {
         this.emitFile({ type: "asset", fileName, source });
       }
     },
-    transformIndexHtml: async (html) => html.replace("<!-- posts -->", postLinks(site, await readWriting())),
+    transformIndexHtml: async (html) =>
+      html.replace("<!-- share -->", (await homepage(site)).head).replace("<!-- posts -->", postLinks(site, await readWriting())),
   };
 }
 

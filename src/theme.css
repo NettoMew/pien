@@ -12,6 +12,8 @@
   --color-red: var(--term-red);
   --color-green: var(--term-green);
   --color-yellow: var(--term-yellow);
+  --color-blue: var(--term-blue);
+  --color-magenta: var(--term-magenta);
   --color-cyan: var(--term-cyan);
 
   --font-*: initial;

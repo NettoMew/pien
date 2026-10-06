@@ -84,11 +84,11 @@ npm run dev            # http://localhost:5173
 
 **串口**（`src/serial/`，[docs/serial.md](docs/serial.md)）。客户机里敲 `serial`，访客电脑上的 USB 转串口线就成了 `/dev/ttyUSB0`，配对过的蓝牙串口成了 `/dev/rfcomm0`，用 tio 连；`ble` 经 Web Bluetooth 连蓝牙 LE 的串口模块（Nordic UART、HM-10 这些），成了 `/dev/ttyBLE0`。背后是 v86 模拟的一颗 16550（客户机的 ttyS2）：客户机的驱动设的速度、帧格式、DTR、RTS、break，页面从芯片寄存器上读出来，经 Web Serial 设到真的线上，1500000 这样的速度也是精确的；CTS、DSR、DCD、RI 反过来传回客户机。lrzsz、esptool、mpremote、stm32flash、avrdude 都在，用到串口时自己去借。
 
-**排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，代码块是带底色的面板，链接可以点，单独一行的图片直接画在终端里（iTerm2 的内联图片序列，页面用 `@xterm/addon-image` 画）。输出到管道时仍然是原文。
+**排版**（`image/rootfs/usr/libexec/home/md.awk`）。`cat` 一个 `.md` 文件到终端时，用 busybox awk 排版：中文可以在字间断行，句末标点悬挂在行尾，比一行还长的词在边上断开；表格只在表头下画线，列宽按显示宽度算，放不下时宽的列让出来、格子里折行；代码块是带底色的面板，按语言上色；链接可以点，单独一行的图片直接画在终端里（iTerm2 的内联图片序列，页面用 `@xterm/addon-image` 画）。输出到管道时仍然是原文。代码的上色规则只写在 `scripts/lib/syntax.ts` 一处：网页版直接用，镜像构建时写成 `/usr/libexec/home/syntax` 给 md.awk 读，两边一步一步照同样的顺序切词。
 
 **写作**（`press/src/writing.ts`、`src/writing.ts`，[docs/writing.md](docs/writing.md)）。站长登录后在机器里写：`blog edit <名字>` 在编辑器里写文章，草稿存在服务器上，拖进来的图片随草稿送去（摆正、去掉 EXIF、存成 JPEG），`blog publish` 发布；`moments new` 发一条动态（`now.md` 已经并进动态）。press 把发布的内容放在一个 git 仓库里，一次一个提交，再渲染出网页和 `/content/`。页面打开时比较服务器的内容索引和机器构建时的那份，只把差别作为按需下载的文件铺进 `~`，所以不用重建虚拟机，访客的机器里也是最新的。
 
-**网页版**（`scripts/lib/blog.ts`）。每篇文章同时生成一个纯静态页面 `/blog/<文章>/`，再加上 `/blog/` 列表、`/moments/` 动态和 `/feed.xml`，给搜索引擎、分享链接和 `open` 用；构建时生成一份，press 在内容变化时再渲染一份，nginx 优先用后者，图片按屏幕宽度从三种 WebP 里选。页面没有 JavaScript：顶上是 fish 会打出的那行提示符，正文用 Tailwind Typography 排版，配色和终端相同，和 `cat` 在终端里排的一样。它们的样式表 `src/blog.css` 是单独的构建入口，只收这些页面用到的类。首页的 `<noscript>` 里也列着文章。
+**网页版**（`scripts/lib/blog.ts`）。每篇文章同时生成一个纯静态页面 `/blog/<文章>/`，再加上 `/blog/` 列表、`/moments/` 动态和 `/feed.xml`，给搜索引擎、分享链接和 `open` 用；构建时生成一份，press 在内容变化时再渲染一份，nginx 优先用后者，图片按屏幕宽度从三种 WebP 里选。页面没有 JavaScript：顶上是 fish 会打出的那行提示符，正文用 Tailwind Typography 排版，配色和终端相同，和 `cat` 在终端里排的一样，代码的颜色也一样。每页带 canonical、Open Graph 标签和一张自己的分享卡片（`scripts/lib/card.ts`：提示符、标题、日期，字按终端的格子排；字形从字体文件里直接取，用 fontkit，sharp 出 PNG，所以构建时和 press 里画出来的一样），还有 `sitemap.xml`、`robots.txt`。它们的样式表 `src/blog.css` 是单独的构建入口，只收这些页面用到的类。首页的 `<noscript>` 里也列着文章。
 
 **缓存**。`/vm/` 和 `/assets/` 下的文件名都带内容哈希，可以永久缓存（`public/_headers`）。当前用的是哪些文件名，构建时直接打进页面的 JS 里，访问时不用先问服务器。
 
@@ -137,4 +137,5 @@ npm run dev            # http://localhost:5173
 - **所有访客的 MAC 都一样**：大家从同一个快照起来，照 SLAAC 生成的 IPv6 地址也一样；公网地址撞了就乱套。所以地址由中继用 DHCPv6 发，每个会话各一个。
 - **udhcpc6 起来就死**：busybox 的 DHCP 客户端在还没有地址时用 packet socket 收发，内核没开 `CONFIG_PACKET`，`socket(AF_PACKET)` 直接失败，日志也只在它自己的 stderr 里。
 - **capability 按线程算**：中继开 uplink 的 packet socket 要 `CAP_NET_RAW`，开完放掉。tokio 的线程一起来就各自继承了一份，在主线程上放掉，别的线程还拿着；所以 `main` 在建运行时之前、还只有一个线程时开 socket、放特权（`relay/src/uplink.rs`）。
+- **fontkit 用不了 WOFF2 的可变字体**：它的 WOFF2 字形解码绕过了可变字体的插值，`getVariation` 出来的实例又按 TTF 去读压缩过的数据，字形是空的。Noto Sans SC 的可变字体（fontsource 拆成一百个按字分的 woff2）先用 Google 的解码器（`wawoff2`，WebAssembly）解成 TTF，再取字重。它的默认字重是 100，不设就是最细的。
 - **Chrome 在标签页里先拿走 Ctrl+T、Ctrl+W、Ctrl+N**：这几个是浏览器的保留键（`chrome/browser/ui/browser_command_controller.cc` 的 `IsReservedCommandOrKey`），根本不交给页面，`preventDefault` 也没用。tio 的命令键 Ctrl+T 因此用不了，改成了 Ctrl+G（`image/home/.config/tio/config`，`image/home/` 照 /etc/skel 的意思铺进 `~`，属主是 guest）；shell 和 nano 里常按的 Ctrl+W 会直接关掉页面，所以访客敲过东西之后，`beforeunload` 先问一句。全屏时，或者在装成应用的窗口里（`public/manifest.webmanifest`），保留键一个都没有，全交给终端。

@@ -2,7 +2,7 @@
 
 一台运行在浏览器里的、真正的 Linux，当作个人主页：https://arc.moe。机器叫 zutto-issho，访客进来就是 `guest@zutto-issho`。Alpine 3.24 用户空间，自己编译的 6.18 内核，fish 4.6，跑在 [v86](https://github.com/copy/v86) 里。
 
-- 读文章：`cat` 在终端里排版，图片直接画在终端里；每篇也有不用 JavaScript 的网页版和 RSS。
+- 读文章：`cat` 在终端里排版，表格、上了色的代码都在，图片直接画在终端里；每篇也有不用 JavaScript 的网页版、RSS，分享出去时有一张终端模样的卡片。
 - 站长登录（通行密钥，或者 GitHub）后就在机器里写文章、发动态，发布了，访客的机器里马上就有。
 - `net on` 联网：经中继拿到 IPv4 和一个自己的公网 IPv6 地址，`curl`、`git`、`ssh`、真的 `ping` 和 `mtr` 都能用。
 - 把访客电脑上的串口线、蓝牙串口、USB 设备借给机器：tio、esptool、adb、fastboot、dfu-util 和各家的刷机工具照常用。

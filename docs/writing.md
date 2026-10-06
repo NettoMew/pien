@@ -57,7 +57,12 @@ press 收到图片后：按 EXIF 摆正，**去掉其余全部 EXIF**（拍摄�
 
 ## 网页
 
-press 用和构建时同一套模板（`scripts/lib/blog.ts`）渲染文章页、列表、动态页（`/moments/`）和 RSS，样式表是线上那次构建的（从 Vite 的 `.vite/manifest.json` 里找）。nginx 优先给 press 渲染的，没有时退回构建出来的那份（`deploy/nginx.conf`）。新部署了站点要重启 press，让它换上新样式表的名字。
+press 用和构建时同一套模板（`scripts/lib/blog.ts`）渲染文章页、列表、动态页（`/moments/`）、RSS 和 `sitemap.xml`，样式表是线上那次构建的（从 Vite 的 `.vite/manifest.json` 里找）。nginx 优先给 press 渲染的，没有时退回构建出来的那份（`deploy/nginx.conf`）。新部署了站点要重启 press，让它换上新样式表的名字。
+
+- **代码**按 `cat` 在终端里上色的同一套规则上色（`scripts/lib/syntax.ts`）：关键字、字符串、注释、数字、函数调用、变量，diff 按行。规则只写在这一处：网页直接用它，镜像构建时把它写成一张表放进客户机（`/usr/libexec/home/syntax`），md.awk 读的就是这张表，一步一步照着同样的顺序切词，所以两边的颜色是一样的。
+- **表格**：GFM 的表格，网页和终端都只在表头下画一道线，列按分隔行里的冒号对齐。终端里列宽按显示宽度算（中文占两格），放不下时宽的列让出来，格子里自己折行。
+- **分享**：每页都有 canonical、Open Graph 和 Twitter 卡片标签，还有一张自己的卡片（`scripts/lib/card.ts`，1200×630 的 PNG，和页面放在一起，按内容命名）：页面顶上那行提示符，下面是标题，最底下是日期和标签，字按终端的格子排，中文占两格。字形直接从字体文件里取（Monaspace Neon；中文用 Noto Sans SC，终端找中文字时也先用它），所以构建时和 press 里画出来的一模一样。首页的卡片是一个空提示符，后面停着光标。
+- **`robots.txt`** 指向 sitemap，不让爬虚拟机的块（`/vm/`）、内容的文件（`/content/files/`）和两个服务。
 
 ## press 的接口
 

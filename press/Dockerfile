@@ -1,5 +1,5 @@
 # press in an image of its own: Node, git for the writing's history, its few
-# packages, and its sources with the four of the site's it renders with, laid
+# packages, and its sources with the six of the site's it renders with, laid
 # out as in the repository. Built from the repository's root (.dockerignore
 # lets only these in):
 #
@@ -15,7 +15,7 @@ WORKDIR /app
 COPY press/package.json press/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY press/src press/src
-COPY scripts/lib/blog.ts scripts/lib/content.ts scripts/lib/
+COPY scripts/lib/blog.ts scripts/lib/card.ts scripts/lib/content.ts scripts/lib/syntax.ts scripts/lib/
 COPY image/image.config.ts image/
 COPY src/theme.ts src/
 RUN printf '#!/bin/sh\nexec node /app/press/src/main.ts "$@"\n' > /usr/local/bin/press && chmod 755 /usr/local/bin/press

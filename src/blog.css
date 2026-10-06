@@ -5,6 +5,7 @@
 @import "@fontsource/monaspace-neon/600.css";
 @import "./theme.css";
 @source "../scripts/lib/blog.ts";
+@source "../scripts/lib/syntax.ts";
 @plugin "@tailwindcss/typography";
 
 /* The posts are Chinese: set in whichever sans the system reads it best in. */
@@ -31,5 +32,29 @@
   --tw-prose-pre-code: --theme(--color-ink);
   --tw-prose-pre-bg: --theme(--color-black);
   --tw-prose-th-borders: --theme(--color-line);
-  --tw-prose-td-borders: --theme(--color-line);
+  /* A rule under the header and none between rows, as md.awk sets a table. */
+  --tw-prose-td-borders: transparent;
+}
+
+/* Columns aligned as their line of dashes says, which marked writes as align. */
+.prose :is(th, td)[align="center"] {
+  text-align: center;
+}
+
+.prose :is(th, td)[align="right"] {
+  text-align: right;
+}
+
+/* A code block's language in its corner, as md.awk prints it on its panel. */
+.prose pre[data-lang] {
+  position: relative;
+}
+
+.prose pre[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0.5em;
+  right: 1em;
+  font-size: 0.8em;
+  color: --theme(--color-faint);
 }

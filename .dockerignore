@@ -5,6 +5,8 @@
 !press/package-lock.json
 !press/src
 !scripts/lib/blog.ts
+!scripts/lib/card.ts
 !scripts/lib/content.ts
+!scripts/lib/syntax.ts
 !image/image.config.ts
 !src/theme.ts
