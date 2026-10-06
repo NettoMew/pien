@@ -9,9 +9,10 @@
 #
 # Lives on the server as /usr/local/bin/pien-deploy (docs/deploy.md). It
 # makes the relay's and press's containers, homepage-relay and homepage-press,
-# on the Docker network homepage; nginx's, homepage-demo, and Caddy's are
-# made once by hand, as docs/deploy.md has it. PIEN_IMAGES says where the
-# images are, for a site published from a fork of its own.
+# in the host's own network, as every container of the site is; nginx's,
+# homepage-demo, and Caddy's are made once by hand, as docs/deploy.md has
+# it. PIEN_IMAGES says where the images are, for a site published from a
+# fork of its own.
 
 set -eu
 
@@ -48,7 +49,7 @@ renew() {
 	shift 2
 	[ "$(docker inspect -f '{{.Image}}' "$name" 2> /dev/null)" != "$(docker image inspect -f '{{.Id}}' "$image")" ] || return 1
 	docker rm -f "$name" > /dev/null 2>&1 || true
-	docker run -d --name "$name" --restart unless-stopped --network homepage "$@" "$image" > /dev/null
+	docker run -d --name "$name" --restart unless-stopped --network host "$@" "$image" > /dev/null
 	echo "$name now runs $image"
 }
 

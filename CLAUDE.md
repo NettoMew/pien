@@ -50,14 +50,15 @@ npm run dev            # http://localhost:5173
 ## 部署
 
 - 推到 `main`、CI 全部通过之后，`.github/workflows/build.yml` 把 `ghcr.io/nettomew/pien-relay`、`-press`、`-site` 推到 GitHub 的容器仓库，打上提交的七位前缀和 `main`。服务器上由站长手动跑 `pien-deploy <提交>`（`deploy/pien-deploy`，`--check` 只拉下来看一眼）。从零怎么部署（用 Docker 或不用）、本站现在的样子，见 [docs/deploy.md](docs/deploy.md)。
-- 服务器上的容器叫 `homepage-relay`、`homepage-press`、`homepage-demo`（nginx）、`homepage-caddy`，接在双栈的 Docker 网络 `homepage` 上：容器名解析出两个地址：Caddy 先拨 IPv6，所以 nginx 两个族都要听；nginx 找中继和 press 只问 IPv4。服务器上只动这几个容器。
+- 服务器上的容器叫 `homepage-relay`、`homepage-press`、`homepage-demo`（nginx）、`homepage-caddy`，都在宿主机自己的网络里（`--network host`）：Caddy 听 80 和 443，其余只听 127.0.0.1（nginx 8080、中继 8095、press 8096），和不用 Docker 时一样，配置文件也是同一份。服务器上只动这几个容器。
+- 访客的 IPv6 是公网的：每个会话一个服务器那段 /64 里的地址，宿主机有一条 AnyIP 路由收下那一段，中继在 eth0 上替在用的地址答上游的邻居请求（docs/deploy.md 的「公网 IPv6」）。
 - 对外的地址是 arc.moe，页面开在 www.arc.moe：arc.moe 由 Cloudflare 301 过去，www 前面是朋友自建的 CDN，回源走 HTTPS，源站的证书是 Caddy 自签的（`tls internal`）。所以 `SITE_URL`（仓库变量）是 `https://arc.moe`，press 的 `PRESS_SITE` 是 `https://www.arc.moe`、`PRESS_RP_ID` 是 `arc.moe`（通行密钥跟着整个域走）。
 - 被绑定挂载着的目录不能 `rm -rf` 了再重建：跑着的容器还拿着删掉的那个。站点换上去以后要重启 nginx 和 press。
 - 线上的中继只认站长的登录。要用真的客户机试它，就在同一台机器、同一个网络上用同一个镜像临时起一个带自己密钥的中继，只发布到 127.0.0.1，经 ssh 转发过来，在 `vite preview` 里 `net relay ws://127.0.0.1:<端口>/`，用完删掉。
 
 ## 各部分怎么做的
 
-**内核**（`image/kernel/`）。在 `allnoconfig` 上只开 v86 需要的东西：四个串口（内核日志、控制通道、访客借来的串口、蓝牙 LE 串口）、virtio 控制台、经 virtio 走的 9p，virtio 网卡和 IPv4、IPv6，USB 核心和 USB/IP 的虚拟主控制器 vhci-hcd，再加上工作台那块盘要的 IDE（`ata_piix`）、squashfs 和 overlayfs。全部编进内核，内核自己把浏览器提供的 9p 目录挂成根文件系统，不需要模块，也不需要 initramfs。编译在一次性的 Alpine 容器里进行，版本和源码校验和都固定。
+**内核**（`image/kernel/`）。在 `allnoconfig` 上只开 v86 需要的东西：四个串口（内核日志、控制通道、访客借来的串口、蓝牙 LE 串口）、virtio 控制台、经 virtio 走的 9p，virtio 网卡和 IPv4、IPv6、packet socket（udhcpc6 要），USB 核心和 USB/IP 的虚拟主控制器 vhci-hcd，再加上工作台那块盘要的 IDE（`ata_piix`）、squashfs 和 overlayfs。全部编进内核，内核自己把浏览器提供的 9p 目录挂成根文件系统，不需要模块，也不需要 initramfs。编译在一次性的 Alpine 容器里进行，版本和源码校验和都固定。
 
 **镜像**（`scripts/build-image.ts`）。只用 Node：读 Alpine x86 仓库的索引，解出依赖（连同 install_if 带进来的，比如每个 Python 包的字节码），解包，叠上 `image/rootfs/`、`content/` 和 `image/tools/` 里另外编译好的工具（`npm run build:tools`），输出：
 
@@ -71,7 +72,7 @@ npm run dev            # http://localhost:5173
 
 **页面**（`src/`）。从 Vite 官方模板（React + TypeScript）起步，样式用 Tailwind。机器和终端都在 React 之外，一页只有一份：`session.ts` 在页面一打开时就开始加载 v86，`terminal.ts` 持有 xterm.js，两者之间的状态（加载进度、标题）放在一个 zustand store 里。React 只画屏幕：CRT 的显像管和玻璃（`components/Screen.tsx`），开机动画（`Boot.tsx`，motion：亮点、扫描线、画面过亮地展开，再滚过一屏开机日志。日志是编的（`boot-log.ts`），节奏却是真的：每一行代表要下载的东西里的一份，下完日志也走完，最后一项服务等机器真正就绪才打上 `ok`；画面展开时机器已经就绪，就直接到提示符），触屏设备上屏幕下方的一排快捷键（`Keys.tsx`，Lucide 图标），以及客户机要用到浏览器授权时浮出的那枚键（`Offer.tsx`、`src/gesture.ts`：手机只在点按的那一刻允许弹窗和选文件，命令传到页面时已经晚了，点一下这枚键就补上）。终端用 DOM 渲染器，每个字符都是一个元素，所以 CSS 能让每个字符按自己的颜色发一点光（`phosphor`）。配色是 Grok Night，只在 `src/theme.ts` 写一次：xterm.js 直接用它，页面用 Vite 插件写进 `<head>` 的 `--term-*` 变量，Tailwind 再给它们起角色名。字体是 Monaspace Neon；Nerd Font 的图标来自单独的符号字体（`src/fonts/`），终端里出现图标时才下载。界面文字全部是英文，文章是中文。会话走 virtio 控制台（hvc0），窗口大小由它原生同步。第二个串口 ttyS1 是控制通道（`attach` 时按浏览器的时钟和时区设置客户机、启动会话；之后每分钟、以及页面从后台回来时再校一次时），见 `image/rootfs/usr/libexec/home/hostd`。客户机里的 `open` 打印一段私有转义序列，由页面接住、在新标签页打开。客户机经 OSC 52 能往访客的剪贴板里写（Neovim 的复制就是这样出来的），但读不到它。文件可以拖到页面上，或者用客户机里的 `drop` 选，出现在 `~/drop`，按需从访客的磁盘读，不复制；反过来，`take` 把客户机里的文件存到访客的电脑上，一个文件是它本身，一个目录或几样东西打成 zip；`share` 把访客电脑上的一个文件夹接到 `/mnt` 下面，能读能写（[docs/files.md](docs/files.md)）。
 
-**联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），旁边还有一段 IPv6（`fdca:c697:4c23::/64`，网关发路由通告，客户机自己生成地址），TCP 先连上真实目标再回 SYN，UDP、ping、traceroute、DNS 都是真的，两个族都一样；WebSocket 里还有一层加密，前面的 TLS 终结者看不到帧。本站的中继只认站长的登录；谁都可以搭自己的中继（`relay key` 给它一把密钥），用 `net relay <地址>` 指过去。详见 [docs/relay.md](docs/relay.md)。
+**联网**（`relay/`、`src/net/`）。客户机有一块 virtio 网卡，平时什么也没接。敲 `net on` 时，页面把它的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段（10.0.2.15，网关 10.0.2.2，DNS 10.0.2.3，和 QEMU 的 user 网络一样），链路层由中继自己应答；IPv6 是每个会话自己的一个 /128，中继用 DHCPv6 发给客户机，配了公网前缀就是公网地址，出门也用它，TCP 先连上真实目标再回 SYN，UDP、ping、traceroute、DNS 都是真的，两个族都一样；WebSocket 里还有一层加密，前面的 TLS 终结者看不到帧。本站的中继只认站长的登录；谁都可以搭自己的中继（`relay key` 给它一把密钥），用 `net relay <地址>` 指过去。详见 [docs/relay.md](docs/relay.md)。
 
 **登录**（`press/`、`src/account/`，[docs/login.md](docs/login.md)）。只有站长一个账号，没有口令：通行密钥是正门，GitHub 是从新设备回来的后门，弹出窗口里走完，页面和机器都不动。第一个通行密钥要服务器给的一次性码（`press enroll`）。press 是一个 TypeScript 小服务；它签发的登录是自证的 token，中继拿同一把会话密钥自己验，不用问谁。客户机里的命令经一条带暗号的问答通道问页面（`src/ask.ts`），终端里显示出来的文字冒充不了。
 
@@ -132,6 +133,8 @@ npm run dev            # http://localhost:5173
 - **16550 的速度只到 115200**：默认时钟除以 16 再除以分频，分频最小是 1。`/etc/rc` 用 `setserial` 把 ttyS2 的时钟调高到 24 MHz（除以 16 之后），1500000、3000000 都成了整数分频；差一点点的（115200 这类）由页面对回标准速度。
 - **Web Serial 丢了设备时不出声**：读流出错后 `port.readable` 变成 null，读循环就静静地停了。USB 线还有 `disconnect` 事件报信，蓝牙设备走远了什么事件也没有，要到客户机下次写才会发现。读循环现在在流一个也不剩时报“坏了”，蓝牙的由页面隔一会儿重开。
 - **装好的 Python 包会在每次运行时重编字节码**：客户机里的访客写不了 `/usr/lib/python3.14`，`__pycache__` 写不进去，每次 import 都在模拟的 CPU 上从源码编一遍。Alpine 的字节码在单独的 `-pyc` 包里，靠 install_if 跟着 `pyc` 装，镜像的依赖解析因此学会了 install_if；`image/tools/python/` 装的几个包，构建时用不核对源码时间的字节码（`unchecked-hash`）编好。
-- **smoltcp 的 SLAAC 有一条 IPv4 路由就不加 IPv6 的**：它往路由表里添路由前，要确认表里没有相同的，可这个判断对 IPv4 路由一律答“不行”，于是只要先有一条 IPv4 默认路由，通告里的 IPv6 默认路由永远加不进去。中继自己不用 SLAAC；测试里扮访客的 smoltcp 要用，就先等通告配好 IPv6，再加 IPv4 路由（`relay/tests/relay.rs`）。
-- **Docker 网络改成双栈后，Caddy 拨不通 nginx**：容器名在双栈网络上解析出两个地址，Caddy 先拨 IPv6 的那个，nginx 只听 IPv4，被拒之后也不改拨，整站 502。`deploy/nginx.conf` 两个族都听。
+- **IPv6 的默认路由一 ping 就没了**：网关原先由 smoltcp 回邻居请求，它回的通告不带 R 位（也不带 O 位，而且只回组播的请求）。Linux 照 RFC 4861 把一个答话不再像路由器的路由器当成普通主机，删掉经它的默认路由。地址由 DHCPv6 发、不带链路上的前缀以后，客户机的 IPv6 全都经 `fe80::2` 走，第一个包就碰上。现在链路层归会话自己（smoltcp 只管 IP 层，`Medium::Ip`），以路由器的身份回答；smoltcp 的邻居表也不用了，第一个包也不会因为它要先问一声而丢掉。
+- **所有访客的 MAC 都一样**：大家从同一个快照起来，照 SLAAC 生成的 IPv6 地址也一样；公网地址撞了就乱套。所以地址由中继用 DHCPv6 发，每个会话各一个。
+- **udhcpc6 起来就死**：busybox 的 DHCP 客户端在还没有地址时用 packet socket 收发，内核没开 `CONFIG_PACKET`，`socket(AF_PACKET)` 直接失败，日志也只在它自己的 stderr 里。
+- **capability 按线程算**：中继开 uplink 的 packet socket 要 `CAP_NET_RAW`，开完放掉。tokio 的线程一起来就各自继承了一份，在主线程上放掉，别的线程还拿着；所以 `main` 在建运行时之前、还只有一个线程时开 socket、放特权（`relay/src/uplink.rs`）。
 - **Chrome 在标签页里先拿走 Ctrl+T、Ctrl+W、Ctrl+N**：这几个是浏览器的保留键（`chrome/browser/ui/browser_command_controller.cc` 的 `IsReservedCommandOrKey`），根本不交给页面，`preventDefault` 也没用。tio 的命令键 Ctrl+T 因此用不了，改成了 Ctrl+G（`image/home/.config/tio/config`，`image/home/` 照 /etc/skel 的意思铺进 `~`，属主是 guest）；shell 和 nano 里常按的 Ctrl+W 会直接关掉页面，所以访客敲过东西之后，`beforeunload` 先问一句。全屏时，或者在装成应用的窗口里（`public/manifest.webmanifest`），保留键一个都没有，全交给终端。

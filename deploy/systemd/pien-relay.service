@@ -3,7 +3,9 @@
 # from `cargo build --release` in relay/, linked to the host's glibc. Its
 # settings are in /etc/pien/relay.toml, readable by its user alone, listening
 # on 127.0.0.1:8095 behind nginx. Its pings need its group inside
-# net.ipv4.ping_group_range, which docs/deploy.md sets.
+# net.ipv4.ping_group_range, which docs/deploy.md sets. With public IPv6
+# for its sessions and an uplink (egress.uplink), it takes CAP_NET_RAW and a
+# packet socket, opened first thing; then it gives up every capability.
 
 [Unit]
 Description=pien's relay, for net on
@@ -16,7 +18,10 @@ User=pien-relay
 Group=pien-relay
 Restart=on-failure
 
-# It reads its settings and opens sockets; nothing more.
+# It reads its settings and opens sockets; nothing more. CAP_NET_RAW and
+# AF_PACKET are the uplink's, for as long as it takes to open one.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -25,7 +30,7 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_PACKET
 RestrictNamespaces=yes
 RestrictRealtime=yes
 LockPersonality=yes

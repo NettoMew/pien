@@ -8,9 +8,20 @@
 # `key = "…"` instead: 64 hex digits from `relay key`, pasted into the page
 # once.
 
-listen = "0.0.0.0:8095"     # in its container; on a host of its own, behind nginx: 127.0.0.1:8095
+listen = "127.0.0.1:8095"   # behind nginx, in the host's own network
 session_key = "64 hex digits, as in press's session key file"
 
 [limits]
 sessions = 4
 idle = 7200
+
+# Each session an IPv6 address of its own, public, from a prefix of the
+# host's that it takes in whole (docs/deploy.md, public IPv6): a /80 out of
+# its /64, say. The uplink is where the upstream router asks after them, if
+# it keeps the /64 on its link rather than routing it to the host; most
+# servers' upstreams do. Without these, the sessions' IPv6 goes out as the
+# host's own.
+#
+# [egress]
+# ipv6 = "2001:db8:1:2:1::/80"
+# uplink = "eth0"

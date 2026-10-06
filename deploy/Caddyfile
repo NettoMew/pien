@@ -4,9 +4,9 @@
 # stands for the site's own name.
 
 example.com {
-	# Docker: the nginx container, by name, on the same network. On a host,
-	# where nginx listens on 127.0.0.1:8080: reverse_proxy 127.0.0.1:8080
-	reverse_proxy homepage-demo:80
+	# nginx, on the same host (in Docker too: every container is in the
+	# host's own network).
+	reverse_proxy 127.0.0.1:8080
 }
 
 # Behind a CDN that fetches the site over HTTPS but checks no certificate,
@@ -21,7 +21,7 @@ example.com {
 #
 #   example.com {
 #   	tls internal
-#   	reverse_proxy homepage-demo:80
+#   	reverse_proxy 127.0.0.1:8080
 #   }
 
 # Other names of the site, sent on to the one above. Leave this out for a name

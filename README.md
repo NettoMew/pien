@@ -4,7 +4,7 @@
 
 - 读文章：`cat` 在终端里排版，图片直接画在终端里；每篇也有不用 JavaScript 的网页版和 RSS。
 - 站长登录（通行密钥，或者 GitHub）后就在机器里写文章、发动态，发布了，访客的机器里马上就有。
-- `net on` 联网：经中继拿到 IPv4 和 IPv6，`curl`、`git`、`ssh`、真的 `ping` 和 `mtr` 都能用。
+- `net on` 联网：经中继拿到 IPv4 和一个自己的公网 IPv6 地址，`curl`、`git`、`ssh`、真的 `ping` 和 `mtr` 都能用。
 - 把访客电脑上的串口线、蓝牙串口、USB 设备借给机器：tio、esptool、adb、fastboot、dfu-util 和各家的刷机工具照常用。
 - 文件拖进来、`take` 存到访客的电脑上、`share` 把访客的一个文件夹接进来，能读能写。
 
@@ -26,7 +26,7 @@ npm run dev            # http://localhost:5173
 
 **页面**（`src/`）。React 画一台 CRT 显示器，终端是 xterm.js，机器和终端都在 React 之外。页面和客户机之间有一条控制通道（第二个串口）、几段私有的转义序列，和一条带暗号的问答通道，终端里显示出来的文字冒充不了。
 
-**联网**（`relay/`、`src/net/`，[docs/relay.md](docs/relay.md)）。`net on` 把客户机网卡的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段，像 QEMU 的 user 网络，IPv6 也有。TCP 先连上真实目标再回客户机的 SYN，UDP、ping、traceroute、DNS 都是真的；WebSocket 里还有一层加密。本站的中继只认站长的登录，谁都可以搭自己的中继，`net relay <地址>` 指过去。
+**联网**（`relay/`、`src/net/`，[docs/relay.md](docs/relay.md)）。`net on` 把客户机网卡的以太网帧经 WebSocket 交给中继：一个 Rust 写的小服务，每条连接一段私有网段，像 QEMU 的 user 网络；IPv6 是每个会话自己的一个地址，中继有公网前缀时就是公网的，出门也用它。TCP 先连上真实目标再回客户机的 SYN，UDP、ping、traceroute、DNS 都是真的；WebSocket 里还有一层加密。本站的中继只认站长的登录，谁都可以搭自己的中继，`net relay <地址>` 指过去。
 
 **登录和写作**（`press/`，[docs/login.md](docs/login.md)、[docs/writing.md](docs/writing.md)）。press 是一个 TypeScript 小服务：只有站长一个账号，通行密钥是正门，GitHub 是从新设备回来的后门。文章和动态在机器里写，草稿存在服务器上，发布进一个 git 仓库，再渲染成网页；页面打开时把服务器上新的东西铺进客户机的 `~`，不用重建虚拟机。
 

@@ -6,7 +6,7 @@ pien 由三样东西组成：
 - **中继**（`relay/`）：`net on` 经它上网；
 - **press**（`press/`）：登录，和在机器里写作；中继认的登录就是它签发的。
 
-前面一个 nginx 照 `deploy/nginx.conf` 提供站点，把 `/relay` 和 `/api/` 转给中继和 press；再前面是 Caddy，管 HTTPS 和证书。
+前面一个 nginx 照 `deploy/nginx.conf` 提供站点，把 `/relay` 和 `/api/` 转给中继和 press；再前面是 Caddy，管 HTTPS 和证书。四样都在宿主机自己的网络里：Caddy 听 80 和 443，其余都只听 127.0.0.1（nginx 8080，中继 8095，press 8096），用不用 Docker 都一样，配置文件也是同一份。
 
 | 想要的 | 需要的 |
 |---|---|
@@ -14,7 +14,7 @@ pien 由三样东西组成：
 | `net on` | 再加中继（或者访客自己的中继，`net relay <地址>`） |
 | 站长登录，在机器里写文章、发动态 | 再加 press |
 
-下面三条路：[用 Docker](#用-docker)（本站的做法）、[不用 Docker](#不用-docker)、[只放静态站点](#只放静态站点)。最后是[本站现在的样子](#本站)。
+下面三条路：[用 Docker](#用-docker)（本站的做法）、[不用 Docker](#不用-docker)、[只放静态站点](#只放静态站点)；访客要公网 IPv6 的话，再看[公网 IPv6](#公网-ipv6)。最后是[本站现在的样子](#本站)。
 
 ## 先准备
 
@@ -26,18 +26,18 @@ pien 由三样东西组成：
 
 ## 用 Docker
 
-中继和 press 由 `pien-deploy` 建、换；Caddy 和 nginx 两个容器只建一次。容器和目录的名字（`homepage-*`）是本站沿用下来的，`pien-deploy` 认的就是它们。
+中继和 press 由 `pien-deploy` 建、换；Caddy 和 nginx 两个容器只建一次。四个容器都用宿主机的网络（`--network host`），不另建 Docker 网络。容器和目录的名字（`homepage-*`）是本站沿用下来的，`pien-deploy` 认的就是它们。
 
 ```
 /srv/caddy/Caddyfile                deploy/Caddyfile，example.com 换成你的域名
 /srv/homepage-demo/nginx.conf       deploy/nginx.conf，原样
-/srv/homepage-demo/site/            站点，pien-deploy 放进来
+/srv/homepage-demo/site/            站点，pien-deploy 放进来；nginx 的容器里挂在 /srv/pien/site
 /srv/homepage-relay/relay.toml      deploy/relay.toml.example，填上会话密钥；属主 65534，权限 600
 /srv/homepage-press/press.env       deploy/press.env.example，改成你的
 /srv/homepage-press/secrets/        session.key、github.secret（可选）；目录 700，文件 600，属主都是 1000
 /srv/homepage-press/data/           属主 1000：通行密钥、草稿、未发布的图片
 /srv/homepage-press/content/        属主 1000：内容仓库；第一次放仓库里的 content/（或你自己的），press 自己 git init
-/srv/homepage-press/public/         属主 1000：press 渲染的网页和 /content/
+/srv/homepage-press/public/         属主 1000：press 渲染的网页和 /content/；nginx 的容器里挂在 /srv/pien/press/public
 ```
 
 前面若是一个回源走 HTTPS、却不校验证书的 CDN，Caddy 不用去申请证书，自己签一张就行：`tls internal`，再加一句 `default_sni`，`deploy/Caddyfile` 里有写法，本站就是这样（[见下](#本站)）。站点和它的通行密钥不在同一个域名下时（比如站点在 www.example.com，通行密钥想跟着整个 example.com 走），press.env 里加 `PRESS_RP_ID`。
@@ -63,16 +63,18 @@ chown 65534:65534 /srv/homepage-relay/relay.toml && chmod 600 /srv/homepage-rela
 chown -R 1000:1000 /srv/homepage-press/secrets /srv/homepage-press/data /srv/homepage-press/content /srv/homepage-press/public
 chmod 700 /srv/homepage-press/secrets /srv/homepage-press/data && chmod 600 /srv/homepage-press/secrets/*
 
-# 网络、Caddy、nginx：一次就够（要 IPv6，网络换成下面那条）
-docker network create homepage
-docker run -d --name homepage-caddy --restart unless-stopped --network homepage \
-  -p 80:80 -p 443:443 \
+# 中继的 ping 用不要特权的 ping socket：让所有组都用得上，和 systemd、Docker 容器里的默认一样
+echo "net.ipv4.ping_group_range = 0 2147483647" > /etc/sysctl.d/60-pien-relay.conf
+sysctl -p /etc/sysctl.d/60-pien-relay.conf
+
+# Caddy、nginx：一次就够
+docker run -d --name homepage-caddy --restart unless-stopped --network host \
   -v /srv/caddy/Caddyfile:/etc/caddy/Caddyfile:ro -v /srv/caddy/data:/data -v /srv/caddy/config:/config \
   caddy:2-alpine
-docker run -d --name homepage-demo --restart unless-stopped --network homepage \
+docker run -d --name homepage-demo --restart unless-stopped --network host \
   -v /srv/homepage-demo/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
-  -v /srv/homepage-demo/site:/usr/share/nginx/html:ro \
-  -v /srv/homepage-press/public:/srv/press:ro \
+  -v /srv/homepage-demo/site:/srv/pien/site:ro \
+  -v /srv/homepage-press/public:/srv/pien/press/public:ro \
   nginx:1.29-alpine
 
 # 部署脚本，然后第一次部署：建出中继和 press，放上站点
@@ -88,13 +90,7 @@ docker exec homepage-press press enroll
 
 **回滚**：`pien-deploy <上一个提交>`。只回滚站点的话：`mv site site.bad && mv site.bak-<时间> site`（在 `/srv/homepage-demo/` 里），再 `docker restart homepage-demo homepage-press`：press 也要重启，它的网页链着站点的样式表。
 
-**IPv6**（可选）：中继的访客要有 IPv6 出口，容器得有 IPv6。`/etc/docker/daemon.json` 写上 `{"experimental": true, "ip6tables": true}`，重启 Docker（Docker 27 起 ip6tables 默认就开着，这一步可以省掉）；上面的 `docker network create homepage` 换成这条，建成双栈：
-
-```sh
-docker network create --ipv6 --subnet 172.18.0.0/16 --subnet fdXX:XXXX:XXXX::/64 homepage
-```
-
-`fd` 后面那十位十六进制随机取（RFC 4193）；`172.18.0.0/16` 要是和机器上别的 Docker 网络撞了，换一段。容器名这时会解析出两个地址：Caddy 会先拨 nginx 的 IPv6 地址，所以 nginx 两个族都要听（`deploy/nginx.conf` 已经是）；nginx 找中继和 press 只问 IPv4（`ipv6=off`），它们只听 IPv4 就行。宿主机自己要是靠路由通告拿 IPv6 地址，`accept_ra` 得是 2，否则 Docker 打开转发后它就丢了默认路由。
+**IPv6**：宿主机有 IPv6，访客就有：每个会话一个私有的 IPv6 地址，出门用宿主机的。要每个会话一个自己的公网地址，见[公网 IPv6](#公网-ipv6)。
 
 ## 不用 Docker
 
@@ -126,13 +122,11 @@ find /srv/pien/site -exec touch -h {} +    # 镜像里的文件都记着 1970 �
 
 ```sh
 crane export ghcr.io/nettomew/pien-relay:main - | tar -xf - -C /usr/local/bin relay
-sed -e 's|^listen = .*|listen = "127.0.0.1:8095"|' \
-    -e "s|^session_key = .*|session_key = \"$(cat /etc/pien/session.key)\"|" \
+sed "s|^session_key = .*|session_key = \"$(cat /etc/pien/session.key)\"|" \
     /srv/pien/src/deploy/relay.toml.example > /etc/pien/relay.toml
 chown pien-relay: /etc/pien/relay.toml && chmod 600 /etc/pien/relay.toml
-# ping 用的是不要特权的 ping socket，要让中继的组用得上
-gid=$(getent group pien-relay | cut -d: -f3)
-echo "net.ipv4.ping_group_range = $gid $gid" > /etc/sysctl.d/60-pien-relay.conf && sysctl --system
+# ping 用的是不要特权的 ping socket，要让中继的组用得上；这是 systemd 的默认，写下来以防万一
+echo "net.ipv4.ping_group_range = 0 2147483647" > /etc/sysctl.d/60-pien-relay.conf && sysctl --system
 cp /srv/pien/src/deploy/systemd/pien-relay.service /etc/systemd/system/ && systemctl enable --now pien-relay
 ```
 
@@ -150,19 +144,16 @@ cp /srv/pien/src/deploy/systemd/pien-press.service /etc/systemd/system/ && syste
 runuser -u pien-press -- sh -c 'set -a; . /etc/pien/press.env; exec node /srv/pien/src/press/src/main.ts enroll'
 ```
 
-**nginx**：用同一份 `deploy/nginx.conf`，只改开头那几行：
+**nginx**：`deploy/nginx.conf`，原样：
 
 ```sh
-sed -e 's|^    listen 80;|    listen 127.0.0.1:8080;|' -e '/^    listen \[::\]:80;/d' \
-    -e 's|set $site .*;|set $site /srv/pien/site;|' -e 's|set $renders .*;|set $renders /srv/pien/press/public;|' \
-    -e 's|set $relay .*;|set $relay http://127.0.0.1:8095;|' -e 's|set $press .*;|set $press http://127.0.0.1:8096;|' \
-    /srv/pien/src/deploy/nginx.conf > /etc/nginx/sites-available/pien
+cp /srv/pien/src/deploy/nginx.conf /etc/nginx/sites-available/pien
 ln -s /etc/nginx/sites-available/pien /etc/nginx/sites-enabled/pien
 rm /etc/nginx/sites-enabled/default    # 它占着 80，那是 Caddy 的
 nginx -t && systemctl restart nginx
 ```
 
-**Caddy**：`/srv/pien/src/deploy/Caddyfile` 放到 `/etc/caddy/Caddyfile`，域名换成你的，`reverse_proxy` 改成 `127.0.0.1:8080`，`systemctl restart caddy`（装好时它和 nginx 抢过 80，可能没起来，所以是 restart，不是 reload）。
+**Caddy**：`/srv/pien/src/deploy/Caddyfile` 放到 `/etc/caddy/Caddyfile`，域名换成你的，`systemctl restart caddy`（装好时它和 nginx 抢过 80，可能没起来，所以是 restart，不是 reload）。
 
 **更新**：
 
@@ -185,6 +176,32 @@ npm ci --omit=dev --prefix /srv/pien/src/press && systemctl restart pien-press
 
 `dist/` 放到哪儿都行：Cloudflare Pages、Netlify 认里面的 `_headers`；用 nginx 就用 `deploy/nginx.conf`，转给中继和 press 的那两段这时只会回 502，删掉也可以。没有 press，页面就用镜像里的文章，不去服务器上找新的；`net on` 要访客用自己的中继，`net relay <地址>`。`dist/` 可以从 CI 的构件 `site` 拿，或者 `crane export ghcr.io/nettomew/pien-site:main - | tar -xf - site`。
 
+## 公网 IPv6
+
+服务器分到一段 /64，就可以给每个会话一个自己的公网 IPv6 地址：访客 `ip a` 看到的、外面看到的，都是它（怎么做到的，见 [relay.md](relay.md#公网-ipv6)）。从这段里挑一小段给中继，比如一段 /80，避开宿主机自己的地址；下面用 `2001:db8:1:2:1::/80` 代替它。用不用 Docker 都一样：
+
+1. **宿主机把这段当成自己的**（AnyIP 路由）：
+
+   ```sh
+   ip -6 route add local 2001:db8:1:2:1::/80 dev lo
+   ```
+
+   开机时也要加上：ifupdown（Debian、Alpine）在 `/etc/network/interfaces` 那块网卡的 `inet6` 一段里加一行 `up ip -6 route add local 2001:db8:1:2:1::/80 dev lo`；systemd-networkd 给 `lo` 写一个 `.network`，`[Route]` 里 `Destination=2001:db8:1:2:1::/80`、`Type=local`。
+
+2. **relay.toml** 加上：
+
+   ```toml
+   [egress]
+   ipv6 = "2001:db8:1:2:1::/80"
+   uplink = "eth0"
+   ```
+
+   `uplink` 是上游路由器所在的那块网卡。上游把 /64 路由到服务器的，不用它；把 /64 当成链路上、给每个地址发包前先问一声的（多数 VPS），要它，中继在那里替正在用的地址回答。分不清就配上，多答几句无妨；怎么看，见 relay.md。
+
+3. **权限**：回答上游要 `CAP_NET_RAW`。Docker 的容器默认就有（别 `--cap-drop` 掉它），镜像里的程序带着它的文件 capability；不用 Docker 时 `deploy/systemd/pien-relay.service` 已经给了。中继开好那一个 socket，就把所有特权都放掉。
+
+然后重启中继：`docker restart homepage-relay`，或 `systemctl restart pien-relay`。日志第一行说地址从哪段取、在哪块网卡上答；页面里 `net on`，`curl -6 https://ifconfig.co` 回的就是访客自己的地址。
+
 ## 本站
 
 对外的地址是 https://arc.moe，页面实际开在 https://www.arc.moe。2026-10-06 晚上起是这样：
@@ -194,10 +211,14 @@ npm ci --omit=dev --prefix /srv/pien/src/press && systemctl restart pien-press
 访客 ──https://www.arc.moe──▶ 朋友自建的 CDN（各地的节点，Let's Encrypt 的证书）
                                   │ 回源：HTTPS，源站自签的证书，不校验
                                   ▼
-                       香港的一台服务器：Caddy（homepage-caddy，80、443）──▶ nginx（homepage-demo）
-                                                             │ Docker 网络 homepage，双栈
+                       香港的一台服务器，四个容器都在它自己的网络里：
+                       Caddy（homepage-caddy，80、443）──▶ nginx（homepage-demo，127.0.0.1:8080）
+                                                             │
                                                              ▼
-                       homepage-relay:8095、homepage-press:8096（都不发布端口）──▶ 互联网，IPv4 和 IPv6
+                       中继（homepage-relay，127.0.0.1:8095）、press（homepage-press，127.0.0.1:8096）
+                                                             │
+                                                             ▼
+                       互联网：IPv4 用服务器的地址，IPv6 用每个会话自己的公网地址
 ```
 
 - **arc.moe**：在 Cloudflare 上解析到一个占位地址（`192.0.2.1`，文档用的地址，从不回源），开着代理，一条跳转规则把它 301 到 www.arc.moe。RSS 和网页版里的绝对地址都写 arc.moe：仓库变量 `SITE_URL=https://arc.moe`。
@@ -213,19 +234,20 @@ npm ci --omit=dev --prefix /srv/pien/src/press && systemctl restart pien-press
 
   www.arc.moe {
   	tls internal
-  	reverse_proxy homepage-demo:80
+  	reverse_proxy 127.0.0.1:8080
   }
   ```
 
 - **press**：`PRESS_SITE=https://www.arc.moe`，GitHub 登录的回调也在 www；`PRESS_RP_ID=arc.moe`，通行密钥属于 arc.moe，搬到 www 之前注册的照样能用。
-- **中继**：以 65534（nobody）运行，配置里只有会话密钥，最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
-- **网络**：IPv4 `172.18.0.0/16`，IPv6 `fdd1:31fb:31e3::/64`（和访客的网段无关：那段只在中继的进程里），两个族都由宿主机做 NAT 出去；Docker 29 默认就写 ip6tables。
+- **中继**：以 65534（nobody）运行，会话密钥之外，配了[公网 IPv6](#公网-ipv6)：每个会话一个服务器那段 /64 里的地址，从其中一段 /80 取；上游把 /64 当成链路上的，挨个地址问，中继在 eth0 上回答。最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
+- **宿主机**：`/etc/network/interfaces` 里那块网卡的 `inet6` 一段加了 AnyIP 路由那一行；`ping_group_range` 放开给所有组（Alpine 默认是 999 到 59999，容器里的 65534 不在里面）。
 
 **来路**：
 
 - 2026-10-04 起，在香港的两台机器上：一台的 Caddy 在前面，另一台跑着 nginx、中继和 press。
 - 2026-10-06 白天，搬到东京的一台机器上，前面是 Cloudflare 的代理。那天在那里做的：中继有了 IPv6，Docker 网络改成双栈（站点停了 13 秒；nginx 当时只听 IPv4，Caddy 先拨 IPv6 拨不通，又报了一分半钟 502，加上 `listen [::]:80` 之后恢复）；发布改由 CI 来做（在那之前，镜像在一台构建机上构建、经本机中转，站点在本机构建后用 tar 传过去）。
 - 2026-10-06 晚上，搬到现在这台：先停了旧机器上的 press，写作就此冻结；它的数据和中继的配置照原样（属主、权限一起）搬过来，内容索引两边一致；再起容器，换上 CDN，站点改开在 www.arc.moe。
+- 同一天夜里，访客有了公网 IPv6：四个容器改用宿主机的网络，Docker 网络 homepage 拆掉，加上 AnyIP 路由和中继的 `egress.ipv6`、`uplink`。
 
 **换会话密钥**（所有登录作废）：新密钥同时写进 `secrets/session.key` 和 `relay.toml`，press 和中继都重启。**换 GitHub 密钥**：写进 `secrets/github.secret`，重启 press。
 
