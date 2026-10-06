@@ -1,0 +1,16 @@
+# In front of the site's nginx (deploy/nginx.conf): HTTPS, its certificates
+# fetched and renewed by Caddy itself, and everything, the WebSockets of
+# `net on` included, passed through as it is (docs/deploy.md). example.com
+# stands for the site's own name.
+
+example.com {
+	# Docker: the nginx container, by name, on the same network. On a host,
+	# where nginx listens on 127.0.0.1:8080: reverse_proxy 127.0.0.1:8080
+	reverse_proxy homepage-demo:80
+}
+
+# Other names of the site, sent on to the one above. Leave this out for a name
+# without a DNS record: Caddy would keep asking for a certificate it cannot get.
+www.example.com {
+	redir https://example.com{uri} permanent
+}

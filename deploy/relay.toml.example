@@ -1,13 +1,14 @@
-# The site's relay on the server (see relay/src/config.rs for all settings).
+# The site's relay (relay/src/config.rs has every setting; docs/deploy.md).
 # It takes the owner's login: session_key is the key press signs logins with
 # (deploy/press.env.example), the same 64 hex digits in both places. Keep this
-# file readable by the relay's user (65534) only.
+# file readable by the relay's user alone: 65534 in its container,
+# pien-relay on a host of its own.
 #
 # A relay of your own, for `net relay <address>` from any page, takes
 # `key = "…"` instead: 64 hex digits from `relay key`, pasted into the page
 # once.
 
-listen = "0.0.0.0:8095"
+listen = "0.0.0.0:8095"     # in its container; on a host of its own, behind nginx: 127.0.0.1:8095
 session_key = "64 hex digits, as in press's session key file"
 
 [limits]

@@ -1,0 +1,36 @@
+# pien's relay on a host of its own, without Docker (docs/deploy.md), as
+# /usr/local/bin/relay: the pien-relay image's binary, static (musl), or one
+# from `cargo build --release` in relay/, linked to the host's glibc. Its
+# settings are in /etc/pien/relay.toml, readable by its user alone, listening
+# on 127.0.0.1:8095 behind nginx. Its pings need its group inside
+# net.ipv4.ping_group_range, which docs/deploy.md sets.
+
+[Unit]
+Description=pien's relay, for net on
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/relay /etc/pien/relay.toml
+User=pien-relay
+Group=pien-relay
+Restart=on-failure
+
+# It reads its settings and opens sockets; nothing more.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

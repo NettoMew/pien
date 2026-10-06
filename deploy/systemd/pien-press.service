@@ -1,0 +1,37 @@
+# press on a host of its own, without Docker (docs/deploy.md): Node 26 runs
+# it from a checkout of the repository at /srv/pien/src, with press's
+# packages installed there as docs/deploy.md says. Its settings are in
+# /etc/pien/press.env; its passkeys, the writing and what it renders, under
+# /srv/pien/press, which its user owns; it listens on 127.0.0.1:8096 behind
+# nginx.
+
+[Unit]
+Description=pien's press: logging in, and the writing
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/pien/press.env
+ExecStart=/usr/bin/node /srv/pien/src/press/src/main.ts
+User=pien-press
+Group=pien-press
+Restart=on-failure
+
+# It writes under /srv/pien/press alone, and reads the built site beside it.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/pien/press
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

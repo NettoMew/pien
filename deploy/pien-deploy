@@ -7,14 +7,15 @@
 #   pien-deploy main                what main published last
 #   pien-deploy <commit> --check    pull and unpack; change nothing that runs
 #
-# Lives on the server as /usr/local/bin/pien-deploy (docs/relay.md, 部署).
-# The containers keep the names and settings they had before CI built their
-# images: homepage-relay, homepage-press, and homepage-demo (nginx), all on
-# the Docker network homepage.
+# Lives on the server as /usr/local/bin/pien-deploy (docs/deploy.md). It
+# makes the relay's and press's containers, homepage-relay and homepage-press,
+# on the Docker network homepage; nginx's, homepage-demo, and Caddy's are
+# made once by hand, as docs/deploy.md has it. PIEN_IMAGES says where the
+# images are, for a site published from a fork of its own.
 
 set -eu
 
-images=ghcr.io/nettomew/pien
+images=${PIEN_IMAGES:-ghcr.io/nettomew/pien}
 demo=/srv/homepage-demo
 keep=3 # earlier versions of the site kept beside it
 
@@ -55,7 +56,11 @@ renew homepage-relay "$images-relay:$tag" \
 	-v /srv/homepage-relay/relay.toml:/etc/relay.toml:ro || true
 
 now=$(date +%Y%m%d-%H%M%S)
-mv "$demo/site" "$demo/site.bak-$now"
+kept=
+if [ -d "$demo/site" ]; then # none on the first deploy
+	mv "$demo/site" "$demo/site.bak-$now"
+	kept="; the site before it is site.bak-$now"
+fi
 mv "$demo/site.new" "$demo/site"
 
 # press renders its pages with the site's stylesheet as it starts: a new
@@ -71,4 +76,4 @@ renew homepage-press "$images-press:$tag" \
 docker restart homepage-demo > /dev/null
 
 find "$demo" -maxdepth 1 -name 'site.bak-*' | sort -r | tail -n +$((keep + 1)) | xargs -r rm -rf
-echo "$tag is up; the site before it is site.bak-$now"
+echo "$tag is up$kept"
