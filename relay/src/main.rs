@@ -38,7 +38,7 @@ async fn main() {
     eprintln!("relay: listening on {address}");
     tokio::select! {
         _ = serving => {}
-        _ = tokio::signal::ctrl_c() => {}
+        _ = stopped() => {}
     }
     let stats = &shared.stats;
     eprintln!(
@@ -48,4 +48,21 @@ async fn main() {
         bytes(stats.up.load(Ordering::Relaxed)),
         bytes(stats.down.load(Ordering::Relaxed))
     );
+}
+
+/// Ctrl-C, or the SIGTERM that `docker stop` and systemd send. As a
+/// container's first process, the relay would otherwise ignore it, and be
+/// killed ten seconds later.
+async fn stopped() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate()).expect("a handler for SIGTERM");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
