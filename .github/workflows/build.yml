@@ -52,6 +52,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: relay
+          cache-on-failure: true
       - run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
       - run: cargo test --manifest-path relay/Cargo.toml
 
@@ -60,17 +61,19 @@ jobs:
       - run: npm test --prefix press
 
       # The machine, built only when something it is made of has changed, or
-      # a week has gone by.
+      # a week has gone by; kept as soon as it is built, whatever the checks
+      # after it make of the rest.
       - id: week
         run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - id: vm
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: public/vm
           key: vm-${{ steps.week.outputs.week }}-${{ hashFiles('image/**', 'content/**', 'scripts/build-image.ts', 'scripts/build-state.ts', 'scripts/build-prefetch.ts', 'scripts/lib/**', 'src/machine.ts', 'src/bytes.ts', 'vm.config.ts', 'package-lock.json') }}
-      # Downloads (Alpine packages, BIOS), the kernel and the tools are keyed by content.
-      - if: steps.vm.outputs.cache-hit != 'true'
-        uses: actions/cache@v6
+      # Downloads (Alpine packages, BIOS), the kernel and the tools, keyed by content.
+      - id: parts
+        if: steps.vm.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v6
         with:
           path: .cache
           key: cache-${{ hashFiles('image/kernel/**', 'image/tools/**', 'image/image.config.ts') }}
@@ -81,6 +84,17 @@ jobs:
         run: npm run build:tools
       - if: steps.vm.outputs.cache-hit != 'true'
         run: npm run build:vm # image, snapshot, and what Python's tools read as they start
+      # Saved after the machine, whose build downloads Alpine's packages into it.
+      - if: steps.vm.outputs.cache-hit != 'true' && steps.parts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .cache
+          key: ${{ steps.parts.outputs.cache-primary-key }}
+      - if: steps.vm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: public/vm
+          key: ${{ steps.vm.outputs.cache-primary-key }}
 
       - run: npm run check:usb
       - run: npm run check:serial
