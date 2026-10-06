@@ -1,0 +1,6 @@
+# tio's settings for the guest (tio(1), CONFIGURATION FILE). Its key commands
+# start with Ctrl-g here, not tio's own Ctrl-t: in a browser tab, Chrome takes
+# Ctrl-t for a new tab before the page ever sees it. Ctrl-g, a bell, is one no
+# serial console asks for, and Chrome lets the page have it.
+[default]
+prefix-ctrl-key = g

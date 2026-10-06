@@ -15,7 +15,7 @@ guest@zutto-issho ~> tio -b 1500000 /dev/ttyUSB0
 
 | 命令 | 用来 |
 |---|---|
-| `tio` | 终端；Ctrl-t x、Ctrl-t y 用 XMODEM、YMODEM 发文件 |
+| `tio` | 终端；它的命令键这里是 Ctrl-g（不是 tio 自己的 Ctrl-t：浏览器的标签页里，Chrome 先把 Ctrl-t 拿去开新标签页了，见 `~/.config/tio/config`）：Ctrl-g q 退出，Ctrl-g x、Ctrl-g y 用 XMODEM、YMODEM 发文件 |
 | `sz` `sx` `sb`，`rz` `rx` `rb` | [lrzsz](https://github.com/UweOhse/lrzsz)：ZMODEM、XMODEM、YMODEM 收发，配合 U-Boot 的 `loadx`、`loady` |
 | `esptool`、`espefuse`、`espsecure` | 乐鑫的芯片，ESP8266 和各型号 ESP32 |
 | `mpremote` | MicroPython 板子的 REPL 和文件 |
@@ -24,7 +24,7 @@ guest@zutto-issho ~> tio -b 1500000 /dev/ttyUSB0
 
 这些工具不用先敲 `serial`，也不用写串口在哪：还没借到串口时它们先借一个，再按各自的方式告诉它。tio 和 stm32flash 加在命令最后，avrdude 加 `-P`，esptool 经 `ESPTOOL_PORT`，mpremote 在前面加 `connect`，lrzsz 把标准输入输出接上去。自己指定了串口，或者这一次用不着串口（`esptool merge-bin`、`mpremote version`），就原样运行。都在 `/etc/fish/conf.d/serial-tools.fish`。
 
-往 U-Boot 传文件，在 tio 里敲 `loady 0x82000000`，再 Ctrl-t y 选文件；或者退出 tio（Ctrl-t q），U-Boot 还在等，`sb u-boot.itb` 就传过去了。
+往 U-Boot 传文件，在 tio 里敲 `loady 0x82000000`，再 Ctrl-g y 选文件；或者退出 tio（Ctrl-g q），U-Boot 还在等，`sb u-boot.itb` 就传过去了。
 
 lrzsz 不在 Alpine 里，esptool 和 mpremote 在 PyPI 上。它们各有一份固定版本的构建（`image/tools/`，`npm run build:tools`）：lrzsz 用 2026 年 10 月的 0.13.1，几十年来第一个新版，修了收发两头的老溢出；Python 那一层：PyPI 上的（esptool 和它要的 esp-pylib、rich-click，mpremote）按版本和哈希固定，只在 GitHub 上的（mtkclient、edl）按提交固定，其余依赖用 Alpine 的包；字节码在构建时编好，客户机里不用再编。
 

@@ -133,6 +133,19 @@ for (const { path, data } of writing) {
 }
 rootfs.write("/usr/share/home/posts", content.posts.map((post) => post.join("\t") + "\n").join(""));
 
+// The guest's own settings, laid into its home as /etc/skel would be, and
+// the guest's to change (image/home/).
+const skel = join(ROOT, "image/home");
+for await (const path of walk(skel)) {
+  const target = home + guestPath(skel, path);
+  // Every directory on the way is the guest's too, ~/.config among them.
+  for (let at = target.indexOf("/", home.length + 1); at > 0; at = target.indexOf("/", at + 1)) {
+    rootfs.mkdir(target.slice(0, at), owner);
+  }
+  rootfs.write(target, await unix(path), owner);
+  info(target);
+}
+
 // ─── Tools ───────────────────────────────────────────────────────────────────
 
 // What image/tools/ builds, laid over the packages as it was laid out. Its
