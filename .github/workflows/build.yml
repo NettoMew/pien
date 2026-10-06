@@ -48,13 +48,17 @@ jobs:
 
       # The network relay (relay/, Rust): a smoltcp guest end to end through it.
       # Its pings go out through unprivileged ping sockets, which containers
-      # allow every group and this runner allows none.
+      # allow every group and this runner allows none. A session with a public
+      # address goes out from it once the host takes its prefix in, as a
+      # deployment's does: an AnyIP route, for a documentation prefix.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: relay
           cache-on-failure: true
       - run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+      - run: sudo ip -6 route add local 2001:db8:5::/64 dev lo
       - run: cargo test --manifest-path relay/Cargo.toml
+      - run: cargo test --manifest-path relay/Cargo.toml --test relay -- --ignored a_public_address_is_the_way_out
 
       # press (press/): logging in, with a passkey in software and a pretend GitHub.
       - run: npm ci --prefix press

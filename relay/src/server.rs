@@ -31,14 +31,19 @@ pub async fn bind(shared: Arc<Shared>) -> std::io::Result<(SocketAddr, impl Futu
     Ok((address, serve(shared, listener)))
 }
 
+/// Pages in, each to a session of its own; and, beside them, answers for
+/// the sessions' addresses wherever the upstream asks (addresses.rs).
 async fn serve(shared: Arc<Shared>, listener: TcpListener) {
-    loop {
-        let Ok((stream, _)) = listener.accept().await else {
-            continue;
-        };
-        let _ = stream.set_nodelay(true);
-        tokio::spawn(connection(shared.clone(), stream));
-    }
+    let accepting = async {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let _ = stream.set_nodelay(true);
+            tokio::spawn(connection(shared.clone(), stream));
+        }
+    };
+    tokio::join!(accepting, shared.addresses.answer());
 }
 
 async fn connection(shared: Arc<Shared>, stream: TcpStream) {

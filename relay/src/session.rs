@@ -5,15 +5,20 @@
 //! 10.0.2.15            the guest
 //! 10.0.2.2             the gateway: answers ARP and ping, and is every route out
 //! 10.0.2.3             the DNS server (dns.rs)
-//! fdca:c697:4c23::/64  the guest's IPv6 network: it makes its own address in it
+//! a /128               the guest in IPv6: the session's own address, public or
+//!                      private (addresses.rs), which DHCPv6 hands it (dhcp.rs)
 //! fdca:c697:4c23::2    the gateway again, which advertises itself from fe80::2
 //! ```
 //!
-//! smoltcp plays the gateway's end of every TCP connection. Each is dialled
-//! for real before the guest's SYN is answered, so "refused" and
-//! "unreachable" reach the guest the way a real network would say them. UDP
-//! and ICMP echo go around smoltcp: each (guest port, destination) gets a
-//! socket of its own out there.
+//! The link is the gateway's own: one guest is all there is on it, so the
+//! gateway answers ARP and neighbour solicitations itself, as the router it
+//! is, and every IP packet for the guest goes to the guest's MAC address.
+//!
+//! smoltcp plays the gateway's end of every TCP connection, at the IP layer.
+//! Each is dialled for real before the guest's SYN is answered, so "refused"
+//! and "unreachable" reach the guest the way a real network would say them.
+//! UDP and ICMP echo go around smoltcp: each (guest port, destination) gets
+//! a socket of its own out there.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::ErrorKind;
@@ -36,6 +41,8 @@ use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::Shared;
+use crate::addresses::Lease;
+use crate::dhcp;
 use crate::egress::{self, Failure};
 use crate::packet::{self, Why};
 use crate::reports::{self, Report};
@@ -43,9 +50,10 @@ use crate::reports::{self, Report};
 pub const GUEST: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 15);
 pub const GATEWAY: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 2);
 pub const DNS: Ipv4Addr = Ipv4Addr::new(10, 0, 2, 3);
-/// The guest's IPv6 network, a /64 of unique local addresses (RFC 4193)
+/// The relay's own IPv6 network, a /64 of unique local addresses (RFC 4193)
 /// whose global ID was drawn at random once: the same in every session, as
-/// 10.0.2.0/24 is. The guest makes its address in it (SLAAC).
+/// 10.0.2.0/24 is. The gateway's address is in it, and the guests' are,
+/// unless the relay has public ones to give (addresses.rs).
 pub const PREFIX: Ipv6Addr = Ipv6Addr::new(0xfdca, 0xc697, 0x4c23, 0, 0, 0, 0, 0);
 pub const GATEWAY6: Ipv6Addr = Ipv6Addr::new(0xfdca, 0xc697, 0x4c23, 0, 0, 0, 0, 2);
 /// The gateway on the link itself: routers advertise from link-local addresses.
@@ -60,7 +68,6 @@ const ALL_NODES_MAC: EthernetAddress = EthernetAddress([0x33, 0x33, 0, 0, 0, 1])
 const ROUTER_LIFETIME: Duration = Duration::from_secs(1800);
 const ADVERTISE_EVERY: Duration = Duration::from_secs(600);
 
-const ETHERNET: usize = EthernetFrame::<&[u8]>::header_len();
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const SOCKET_BUFFER: usize = 256 << 10;
 const CHUNK: usize = 16 << 10;
@@ -190,6 +197,8 @@ pub async fn run(
 
 struct Session {
     shared: Arc<Shared>,
+    /// The guest's IPv6 address, the session's own.
+    lease: Lease,
     iface: Interface,
     wire: Wire,
     sockets: SocketSet<'static>,
@@ -212,7 +221,7 @@ struct Session {
 impl Session {
     fn new(shared: Arc<Shared>) -> Self {
         let mut wire = Wire::default();
-        let mut config = Config::new(HardwareAddress::Ethernet(GATEWAY_MAC));
+        let mut config = Config::new(HardwareAddress::Ip);
         let mut seed = [0; 8];
         getrandom::fill(&mut seed).expect("the OS has randomness");
         config.random_seed = u64::from_le_bytes(seed);
@@ -226,8 +235,10 @@ impl Session {
         // Accept packets for any address, as a router does: all routes lead here.
         iface.set_any_ip(true);
         iface.routes_mut().add_default_ipv4_route(GATEWAY).unwrap();
+        iface.routes_mut().add_default_ipv6_route(GATEWAY6).unwrap();
         let (events_tx, events_rx) = mpsc::channel(1024);
         Self {
+            lease: shared.addresses.lease(),
             shared,
             iface,
             wire,
@@ -262,7 +273,9 @@ impl Session {
         self.iface.poll(now, &mut self.wire, &mut self.sockets);
         self.service();
         self.iface.poll(now, &mut self.wire, &mut self.sockets);
-        self.outbox.append(&mut self.wire.tx);
+        for ip in std::mem::take(&mut self.wire.tx) {
+            self.tell_guest(Some(ip));
+        }
     }
 
     // ─── From the guest ──────────────────────────────────────────────────────
@@ -276,27 +289,62 @@ impl Session {
             self.guest_mac = Some(ethernet.src_addr());
         }
         match ethernet.ethertype() {
-            EthernetProtocol::Arp => self.wire.rx.push_back(frame),
-            EthernetProtocol::Ipv4 | EthernetProtocol::Ipv6 => self.guest_ip(frame),
+            EthernetProtocol::Arp => self.arp(ethernet.payload()),
+            EthernetProtocol::Ipv4 | EthernetProtocol::Ipv6 => self.guest_ip(ethernet.payload().to_vec()),
             _ => {}
         }
     }
 
-    fn guest_ip(&mut self, frame: Vec<u8>) {
-        let raw = &frame[ETHERNET..];
-        let Some(ip) = packet::Ip::parse(raw) else {
+    /// The gateway answers for every address on the guest's link but the
+    /// guest's own — 10.0.2.2 and 10.0.2.3, and whatever an alias puts there.
+    fn arp(&mut self, packet: &[u8]) {
+        if let Some(asked) = packet::arp_request(packet)
+            && asked.target != GUEST
+        {
+            self.outbox.push(packet::arp_reply(&asked, GATEWAY_MAC));
+        }
+    }
+
+    /// The gateway answers a neighbour solicitation for one of its own IPv6
+    /// addresses as a router: one that stays the guest's way out. (A probe
+    /// for a duplicate, from the unspecified address, it leaves be: the
+    /// guest has no business with the gateway's addresses.)
+    fn neighbor(&mut self, packet: &[u8]) {
+        let Some(asked) = packet::neighbor_solicitation(packet) else {
+            return;
+        };
+        if (asked.target == GATEWAY_LINK || asked.target == GATEWAY6) && !asked.from.is_unspecified() {
+            let advert = packet::neighbor_advert(asked.target, asked.from, GATEWAY_MAC, true);
+            self.tell_guest(Some(advert));
+        }
+    }
+
+    fn guest_ip(&mut self, raw: Vec<u8>) {
+        let Some(ip) = packet::Ip::parse(&raw) else {
             return;
         };
         match ip.icmpv6() {
             Some(Icmpv6Message::RouterSolicit) => return self.advertise(),
-            // smoltcp keeps the gateway's neighbours, and answers as one.
-            Some(Icmpv6Message::NeighborSolicit | Icmpv6Message::NeighborAdvert) => {
-                return self.wire.rx.push_back(frame);
-            }
+            Some(Icmpv6Message::NeighborSolicit) => return self.neighbor(&raw),
+            Some(Icmpv6Message::NeighborAdvert) => return, // the guest's own, which the gateway has no use for
             _ => {}
         }
+        // DHCPv6: the guest, from its link-local address, asking for its own.
+        if let IpAddr::V6(src) = ip.src
+            && src.is_unicast_link_local()
+            && (ip.dst == IpAddr::V6(dhcp::SERVERS) || ip.dst == IpAddr::V6(GATEWAY_LINK))
+            && ip.protocol == IpProtocol::Udp
+            && let Ok(udp) = UdpPacket::new_checked(ip.payload)
+            && udp.dst_port() == dhcp::SERVER
+        {
+            let client = SocketAddr::new(ip.src, udp.src_port());
+            if let Some(answer) = dhcp::answer(udp.payload(), self.lease.address(), GATEWAY_MAC) {
+                self.tell_guest(packet::udp((GATEWAY_LINK, dhcp::SERVER).into(), client, &answer));
+            }
+            return;
+        }
         let to_gateway = is_gateway(ip.dst);
-        if !from_guest(ip.src, to_gateway) {
+        if !self.may_send_from(ip.src, to_gateway) {
             return;
         }
         if ip.dst == IpAddr::V4(DNS)
@@ -307,7 +355,7 @@ impl Session {
             return self.dns(SocketAddr::new(ip.src, udp.src_port()), udp.payload().to_vec());
         }
         if to_gateway {
-            return self.wire.rx.push_back(frame); // smoltcp: ping, and resets for the rest
+            return self.wire.rx.push_back(raw); // smoltcp: ping, and resets for the rest
         }
         if ip.dst.is_multicast() || ip.dst == IpAddr::V4(Ipv4Addr::BROADCAST) {
             return;
@@ -315,14 +363,14 @@ impl Session {
         // A router: what arrives on its last hop goes no further. This is
         // traceroute's (and mtr's) first answer.
         if ip.hop_limit <= 1 {
-            return self.refuse(raw, Why::TimeExceeded);
+            return self.refuse(&raw, Why::TimeExceeded);
         }
         let ends = |from, to| (SocketAddr::new(ip.src, from), SocketAddr::new(ip.dst, to));
         let probe = |seq_no, data: &[u8]| Probe {
             seq_no,
             data: data.to_vec(),
             hop_limit: ip.hop_limit,
-            quote: packet::quote(raw).to_vec(),
+            quote: packet::quote(&raw).to_vec(),
         };
         let parsed = match ip.protocol {
             IpProtocol::Tcp => TcpPacket::new_checked(ip.payload).ok().map(|tcp| {
@@ -338,20 +386,20 @@ impl Session {
             _ => Some(Packet::Other),
         };
         match parsed {
-            Some(Packet::Tcp(key, syn)) => self.tcp(key, syn, frame),
-            Some(Packet::Udp(key, probe)) => self.udp(key, probe, &frame[ETHERNET..]),
+            Some(Packet::Tcp(key, syn)) => self.tcp(key, syn, raw),
+            Some(Packet::Udp(key, probe)) => self.udp(key, probe, &raw),
             Some(Packet::Echo(key, probe)) => self.echo(key, probe),
-            Some(Packet::Other) => self.refuse(&frame[ETHERNET..], Why::Protocol),
+            Some(Packet::Other) => self.refuse(&raw, Why::Protocol),
             None => {}
         }
     }
 
-    fn tcp(&mut self, key: Key, syn: bool, frame: Vec<u8>) {
+    fn tcp(&mut self, key: Key, syn: bool, packet: Vec<u8>) {
         match self.flows.get(&key) {
-            Some(flow) if flow.socket.is_some() => self.wire.rx.push_back(frame),
+            Some(flow) if flow.socket.is_some() => self.wire.rx.push_back(packet),
             Some(_) => {} // the SYN again, while we dial
-            None if syn => self.dial(key, frame),
-            None => self.wire.rx.push_back(frame), // a stray segment: smoltcp resets it
+            None if syn => self.dial(key, packet),
+            None => self.wire.rx.push_back(packet), // a stray segment: smoltcp resets it
         }
     }
 
@@ -361,13 +409,14 @@ impl Session {
             .then(|| config.policy.route(key.1))
             .flatten();
         let Some(target) = target else {
-            return self.refuse(&syn[ETHERNET..], Why::Prohibited);
+            return self.refuse(&syn, Why::Prohibited);
         };
         let (to_remote, from_guest) = mpsc::channel(4);
         let credit = Arc::new(Semaphore::new(1));
         let task = tokio::spawn(flow(
             key,
             target,
+            self.lease.way_out(),
             self.shared.clone(),
             from_guest,
             credit.clone(),
@@ -406,7 +455,7 @@ impl Session {
         };
         let (tx, rx) = mpsc::channel(64);
         let _ = tx.try_send(probe);
-        tokio::spawn(datagrams(key, target, rx, self.events_tx.clone()));
+        tokio::spawn(datagrams(key, target, self.lease.way_out(), rx, self.events_tx.clone()));
         self.datagrams.insert(key, tx);
     }
 
@@ -423,7 +472,7 @@ impl Session {
         };
         let (tx, rx) = mpsc::channel(64);
         let _ = tx.try_send(probe);
-        tokio::spawn(pings(key, target, rx, self.events_tx.clone()));
+        tokio::spawn(pings(key, target, self.lease.way_out(), rx, self.events_tx.clone()));
         self.pings.insert(key, tx);
     }
 
@@ -437,9 +486,9 @@ impl Session {
     }
 
     /// Tells every node on the link — the guest — that the gateway is the
-    /// way out, and which network to make an address in.
+    /// way out, and to ask it for an address.
     fn advertise(&mut self) {
-        let advert = packet::router_advert(GATEWAY_LINK, GATEWAY_MAC, PREFIX, ROUTER_LIFETIME);
+        let advert = packet::router_advert(GATEWAY_LINK, GATEWAY_MAC, ROUTER_LIFETIME);
         self.outbox.push(packet::ethernet(ALL_NODES_MAC, GATEWAY_MAC, &advert));
         self.next_advert = Clock::now() + ADVERTISE_EVERY;
     }
@@ -457,6 +506,16 @@ impl Session {
     fn tell_guest(&mut self, ip: Option<Vec<u8>>) {
         if let (Some(ip), Some(mac)) = (ip, self.guest_mac) {
             self.outbox.push(packet::ethernet(mac, GATEWAY_MAC, &ip));
+        }
+    }
+
+    /// Whether the guest may send from `src`: 10.0.2.15, or the IPv6 address
+    /// it was given. Its link-local address reaches the gateway alone, as on
+    /// any link: routers forward nothing from one.
+    fn may_send_from(&self, src: IpAddr, to_gateway: bool) -> bool {
+        match src {
+            IpAddr::V4(src) => src == GUEST,
+            IpAddr::V6(src) => src == self.lease.address() || (to_gateway && src.is_unicast_link_local()),
         }
     }
 
@@ -506,10 +565,9 @@ impl Session {
         };
         if let Err(failure) = result {
             self.flows.remove(&key);
-            let ip = &syn[ETHERNET..];
             return match failure {
-                Failure::Refused => self.tell_guest(packet::tcp_reset(ip)),
-                Failure::Unreachable => self.refuse(ip, Why::Unreachable),
+                Failure::Refused => self.tell_guest(packet::tcp_reset(&syn)),
+                Failure::Unreachable => self.refuse(&syn, Why::Unreachable),
             };
         }
         let buffer = || tcp::SocketBuffer::new(vec![0; SOCKET_BUFFER]);
@@ -596,16 +654,6 @@ fn is_gateway(ip: IpAddr) -> bool {
     }
 }
 
-/// Whether the guest may send from `src`: 10.0.2.15, or an address it made in
-/// its IPv6 network. Its link-local address reaches the gateway alone, as on
-/// any link: routers forward nothing from one.
-fn from_guest(src: IpAddr, to_gateway: bool) -> bool {
-    match src {
-        IpAddr::V4(src) => src == GUEST,
-        IpAddr::V6(src) => src.segments()[..4] == PREFIX.segments()[..4] || (to_gateway && src.is_unicast_link_local()),
-    }
-}
-
 enum Packet {
     Tcp(Key, bool),
     Udp(Key, Probe),
@@ -624,16 +672,18 @@ struct Probe {
 
 // ─── The far ends ────────────────────────────────────────────────────────────
 
-/// One TCP connection out: dial, report, then carry bytes both ways.
+/// One TCP connection out: dial, report, then carry bytes both ways. Over
+/// IPv6, from `from` if the session has a public address (addresses.rs).
 async fn flow(
     key: Key,
     target: SocketAddr,
+    from: Option<Ipv6Addr>,
     shared: Arc<Shared>,
     mut from_guest: mpsc::Receiver<Bytes>,
     credit: Arc<Semaphore>,
     events: mpsc::Sender<Event>,
 ) {
-    let dialled = tokio::time::timeout(DIAL_TIMEOUT, egress::tcp(&shared.config.egress, target)).await;
+    let dialled = tokio::time::timeout(DIAL_TIMEOUT, egress::tcp(&shared.config.egress, target, from)).await;
     let stream = match dialled.unwrap_or(Err(Failure::Unreachable)) {
         Ok(stream) => stream,
         Err(failure) => return drop(events.send(Event::Dialled(key, Err(failure))).await),
@@ -671,8 +721,14 @@ async fn flow(
 }
 
 /// One UDP conversation: the guest's port with one destination.
-async fn datagrams(key: Key, target: SocketAddr, mut from_guest: mpsc::Receiver<Probe>, events: mpsc::Sender<Event>) {
-    let Ok(socket) = egress::udp(target).await else { return };
+async fn datagrams(
+    key: Key,
+    target: SocketAddr,
+    from: Option<Ipv6Addr>,
+    mut from_guest: mpsc::Receiver<Probe>,
+    events: mpsc::Sender<Event>,
+) {
+    let Ok(socket) = egress::udp(target, from).await else { return };
     reports::enable(&socket);
     let mut hops = Hops::default();
     let mut quote = Vec::new(); // the latest datagram's, for what the network says about it
@@ -709,8 +765,14 @@ async fn datagrams(key: Key, target: SocketAddr, mut from_guest: mpsc::Receiver<
 }
 
 /// One ping conversation: the guest's echo identifier with one destination.
-async fn pings(key: Key, target: IpAddr, mut from_guest: mpsc::Receiver<Probe>, events: mpsc::Sender<Event>) {
-    let Ok(socket) = egress::ping(target) else { return };
+async fn pings(
+    key: Key,
+    target: IpAddr,
+    from: Option<Ipv6Addr>,
+    mut from_guest: mpsc::Receiver<Probe>,
+    events: mpsc::Sender<Event>,
+) {
+    let Ok(socket) = egress::ping(target, from) else { return };
     reports::enable(&socket);
     let (request, reply) = packet::echo(target.is_ipv6());
     let mut hops = Hops::default();
@@ -781,6 +843,8 @@ impl Hops {
 
 // ─── smoltcp's view of the wire ──────────────────────────────────────────────
 
+/// IP packets both ways, the guest's in and smoltcp's out: the link around
+/// them is the session's.
 #[derive(Default)]
 struct Wire {
     rx: VecDeque<Vec<u8>>,
@@ -798,9 +862,9 @@ impl RxToken for Rx {
 
 impl TxToken for Tx<'_> {
     fn consume<R, F: FnOnce(&mut [u8]) -> R>(self, len: usize, f: F) -> R {
-        let mut frame = vec![0; len];
-        let result = f(&mut frame);
-        self.0.push(frame);
+        let mut packet = vec![0; len];
+        let result = f(&mut packet);
+        self.0.push(packet);
         result
     }
 }
@@ -810,8 +874,8 @@ impl Device for Wire {
     type TxToken<'a> = Tx<'a>;
 
     fn receive(&mut self, _: Instant) -> Option<(Rx, Tx<'_>)> {
-        let frame = self.rx.pop_front()?;
-        Some((Rx(frame), Tx(&mut self.tx)))
+        let packet = self.rx.pop_front()?;
+        Some((Rx(packet), Tx(&mut self.tx)))
     }
 
     fn transmit(&mut self, _: Instant) -> Option<Tx<'_>> {
@@ -820,8 +884,8 @@ impl Device for Wire {
 
     fn capabilities(&self) -> DeviceCapabilities {
         let mut caps = DeviceCapabilities::default();
-        caps.medium = Medium::Ethernet;
-        caps.max_transmission_unit = 1514;
+        caps.medium = Medium::Ip;
+        caps.max_transmission_unit = 1500;
         caps
     }
 }

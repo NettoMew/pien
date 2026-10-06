@@ -13,6 +13,10 @@
 //! [egress]
 //! socks5 = "127.0.0.1:7890"       # TCP through a SOCKS5 proxy; default: direct
 //! udp = true
+//! ipv6 = "2001:db8:1:2:1::/80"    # each session an address of its own from here, to go
+//!                                 # out from (addresses.rs); default: none, a private one
+//! uplink = "eth0"                 # where the upstream asks after them (uplink.rs);
+//!                                 # default: nowhere, it routes the prefix here
 //!
 //! [policy]
 //! allow_private = false           # private, loopback, link-local … addresses
@@ -29,7 +33,8 @@
 //! ```
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::str::FromStr;
 
 use serde::Deserialize;
 
@@ -62,6 +67,51 @@ pub struct Dns {
 pub struct Egress {
     pub socks5: Option<SocketAddr>,
     pub udp: bool,
+    /// A public prefix, whose addresses the sessions go out from.
+    pub ipv6: Option<Prefix>,
+    /// The interface the upstream asks after those addresses on.
+    pub uplink: Option<String>,
+}
+
+/// An IPv6 prefix, written as one: `2001:db8:1:2:1::/80`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(try_from = "String")]
+pub struct Prefix {
+    pub address: Ipv6Addr,
+    pub len: u8,
+}
+
+impl Prefix {
+    /// The address in the prefix whose remaining bits are `bits`'.
+    pub fn with(self, bits: u128) -> Ipv6Addr {
+        let network = u128::MAX.checked_shl(128 - u32::from(self.len)).unwrap_or(0);
+        Ipv6Addr::from((u128::from(self.address) & network) | (bits & !network))
+    }
+}
+
+impl FromStr for Prefix {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        let bad = || format!("{s:?}: an IPv6 prefix, such as 2001:db8:1:2:1::/80");
+        let (address, len) = s.split_once('/').ok_or_else(bad)?;
+        let prefix = Self {
+            address: address.parse().map_err(|_| bad())?,
+            len: len.parse().map_err(|_| bad())?,
+        };
+        match prefix.len {
+            0..=120 => Ok(Self { address: prefix.with(0), ..prefix }),
+            _ => Err(format!("{s:?}: a /120 or wider, with addresses to draw from")),
+        }
+    }
+}
+
+impl TryFrom<String> for Prefix {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, String> {
+        s.parse()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -111,6 +161,8 @@ impl Default for Egress {
         Self {
             socks5: None,
             udp: true,
+            ipv6: None,
+            uplink: None,
         }
     }
 }
@@ -142,6 +194,9 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self, String> {
         let config: Self = toml::from_str(text).map_err(|e| e.to_string())?;
         config.keys()?;
+        if config.egress.uplink.is_some() && config.egress.ipv6.is_none() {
+            return Err("egress.uplink: answers for egress.ipv6's addresses, which is not set".into());
+        }
         Ok(config)
     }
 
@@ -194,5 +249,24 @@ mod tests {
         assert!(Config::parse("").is_err()); // a relay nobody may use
         let site = Config::parse(&format!("session_key = \"{}\"", "CD".repeat(32))).unwrap();
         assert_eq!(site.keys().unwrap().session, Some([0xcd; 32]));
+    }
+
+    #[test]
+    fn prefixes() {
+        let prefix: Prefix = "2001:db8:1:2:1:ffff::/80".parse().unwrap();
+        assert_eq!(prefix.address, "2001:db8:1:2:1::".parse::<Ipv6Addr>().unwrap()); // the host bits, cleared
+        assert_eq!(prefix.with(u128::MAX), "2001:db8:1:2:1:ffff:ffff:ffff".parse::<Ipv6Addr>().unwrap());
+        assert_eq!("::/0".parse::<Prefix>().unwrap().with(1), Ipv6Addr::from(1));
+        for bad in ["2001:db8::", "2001:db8::/121", "10.0.2.0/24", "2001:db8::/x"] {
+            assert!(bad.parse::<Prefix>().is_err(), "{bad}");
+        }
+        let key = format!("key = \"{}\"
+", "ab".repeat(32));
+        let public = Config::parse(&format!("{key}[egress]
+ipv6 = \"2001:db8:1:2:1::/80\"
+uplink = \"eth0\"")).unwrap();
+        assert_eq!((public.egress.ipv6.map(|p| p.len), public.egress.uplink.as_deref()), (Some(80), Some("eth0")));
+        assert!(Config::parse(&format!("{key}[egress]
+uplink = \"eth0\"")).is_err()); // nothing to answer for
     }
 }

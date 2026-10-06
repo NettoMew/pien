@@ -9,8 +9,10 @@ description = "A private Ethernet segment per WebSocket, gatewayed onto the inte
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "signal"] }
 tokio-tungstenite = "0.30"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-# Four addresses for the gateway: 10.0.2.2, 10.0.2.3, its IPv6 one and fe80::2.
-smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "proto-ipv6", "socket-tcp", "auto-icmp-echo-reply", "iface-max-addr-count-4"] }
+# The gateway at the IP layer (the session keeps the link), with four
+# addresses: 10.0.2.2, 10.0.2.3, its IPv6 one and fe80::2. Ethernet's, ARP's
+# and neighbour discovery's packets, the session reads and writes itself.
+smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ip", "medium-ethernet", "proto-ipv4", "proto-ipv6", "socket-tcp", "auto-icmp-echo-reply", "iface-max-addr-count-4"] }
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "tls-ring", "webpki-roots", "system-config"] }
 aes-gcm = "0.11"
 hkdf = "0.13"
@@ -29,7 +31,6 @@ bytes = "1"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 
-# The tests' guest makes its IPv6 address as Linux does, from the gateway's
-# advertisements (SLAAC).
+# The tests' guest asks for its IPv6 address by DHCPv6, over a UDP socket.
 [dev-dependencies]
-smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "proto-ipv6", "proto-ipv6-slaac", "socket-tcp", "socket-udp"] }
+smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"] }

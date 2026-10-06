@@ -1,18 +1,21 @@
 //! Packets the gateway makes up itself, outside smoltcp, in either family:
 //! what comes back from the outside world (UDP, ICMP echo), the ways a
 //! connection fails before it exists (a TCP reset, an ICMP error), and the
-//! router advertisements the guest makes its IPv6 address from. And what
-//! little the gateway reads of the guest's own packets ([`Ip`]).
+//! link's own: answers to ARP and neighbour solicitations, and router
+//! advertisements. And what little the gateway reads of the guest's own
+//! packets ([`Ip`]). On the uplink, the same both ways round (uplink.rs):
+//! the upstream's neighbour solicitations, and the relay's answers.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use smoltcp::phy::ChecksumCapabilities;
 use smoltcp::wire::{
-    EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, IPV6_LINK_LOCAL_ALL_NODES, IPV6_MIN_MTU,
+    ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr,
+    IPV6_LINK_LOCAL_ALL_NODES, IPV6_MIN_MTU,
     Icmpv6Message, Icmpv6Packet, Icmpv6Repr, IpAddress, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet,
-    NdiscPrefixInfoFlags, NdiscPrefixInformation, NdiscRepr, NdiscRouterFlags, TcpControl, TcpPacket, TcpRepr,
-    TcpSeqNumber, UdpPacket, UdpRepr,
+    NdiscNeighborFlags, NdiscRepr, NdiscRouterFlags, TcpControl, TcpPacket, TcpRepr, TcpSeqNumber, UdpPacket,
+    UdpRepr,
 };
 
 const TTL: u8 = 64;
@@ -239,29 +242,125 @@ pub fn source(packet: &[u8]) -> Option<IpAddr> {
 }
 
 /// A router advertisement, to every node on the link: `router` (link-local,
-/// at `mac`) is the way out for `lifetime`, and `prefix`/64 is on the link,
-/// to make addresses in (SLAAC) for good.
-pub fn router_advert(router: Ipv6Addr, mac: EthernetAddress, prefix: Ipv6Addr, lifetime: Duration) -> Vec<u8> {
-    let forever = smoltcp::time::Duration::from_secs(u32::MAX.into());
+/// at `mac`) is the way out for `lifetime`, and addresses come from DHCPv6
+/// (the M flag; dhcp.rs). No prefix is on the link to make one in.
+pub fn router_advert(router: Ipv6Addr, mac: EthernetAddress, lifetime: Duration) -> Vec<u8> {
     let advert = Icmpv6Repr::Ndisc(NdiscRepr::RouterAdvert {
         hop_limit: TTL,
-        flags: NdiscRouterFlags::empty(),
+        flags: NdiscRouterFlags::MANAGED,
         router_lifetime: lifetime.into(),
         reachable_time: smoltcp::time::Duration::ZERO,
         retrans_time: smoltcp::time::Duration::ZERO,
         lladdr: Some(mac.into()),
         mtu: None,
-        prefix_info: Some(NdiscPrefixInformation {
-            prefix_len: 64,
-            flags: NdiscPrefixInfoFlags::ON_LINK | NdiscPrefixInfoFlags::ADDRCONF,
-            valid_lifetime: forever,
-            preferred_lifetime: forever,
-            prefix,
-        }),
+        prefix_info: None,
     });
     let everyone = IPV6_LINK_LOCAL_ALL_NODES;
     ip(router.into(), everyone.into(), IpProtocol::Icmpv6, ON_LINK, advert.buffer_len(), |buf| {
         advert.emit(&router, &everyone, &mut Icmpv6Packet::new_unchecked(buf), &checksums())
+    })
+    .expect("both ends are IPv6")
+}
+
+/// An ARP request: who asks, at which addresses, and after which address.
+pub struct ArpRequest {
+    pub from: Ipv4Addr,
+    pub mac: EthernetAddress,
+    pub target: Ipv4Addr,
+}
+
+/// `packet`, if it is an ARP request for an IPv4 address on Ethernet.
+pub fn arp_request(packet: &[u8]) -> Option<ArpRequest> {
+    let arp = ArpPacket::new_checked(packet).ok()?;
+    match ArpRepr::parse(&arp).ok()? {
+        ArpRepr::EthernetIpv4 {
+            operation: ArpOperation::Request,
+            source_hardware_addr,
+            source_protocol_addr,
+            target_protocol_addr,
+            ..
+        } if source_hardware_addr.is_unicast() => Some(ArpRequest {
+            from: source_protocol_addr,
+            mac: source_hardware_addr,
+            target: target_protocol_addr,
+        }),
+        _ => None,
+    }
+}
+
+/// The answer to an ARP request, a whole frame: its target is at `mac`.
+pub fn arp_reply(asked: &ArpRequest, mac: EthernetAddress) -> Vec<u8> {
+    let reply = ArpRepr::EthernetIpv4 {
+        operation: ArpOperation::Reply,
+        source_hardware_addr: mac,
+        source_protocol_addr: asked.target,
+        target_hardware_addr: asked.mac,
+        target_protocol_addr: asked.from,
+    };
+    let ethernet = EthernetRepr {
+        src_addr: mac,
+        dst_addr: asked.mac,
+        ethertype: EthernetProtocol::Arp,
+    };
+    let mut frame = vec![0; ethernet.buffer_len() + reply.buffer_len()];
+    let mut packet = EthernetFrame::new_unchecked(&mut frame);
+    ethernet.emit(&mut packet);
+    reply.emit(&mut ArpPacket::new_unchecked(packet.payload_mut()));
+    frame
+}
+
+/// A neighbour solicitation, as the gateway hears one from the guest, or the
+/// uplink from upstream: who asks, after which address, and at which
+/// link-layer address the asker says it is.
+pub struct Solicitation {
+    pub from: Ipv6Addr,
+    pub target: Ipv6Addr,
+    pub lladdr: Option<EthernetAddress>,
+}
+
+/// `packet`, if it is a neighbour solicitation that never crossed a router
+/// (RFC 4861, 7.1.1), its checksum checked.
+pub fn neighbor_solicitation(packet: &[u8]) -> Option<Solicitation> {
+    let ip = Ipv6Packet::new_checked(packet).ok()?;
+    if ip.next_header() != IpProtocol::Icmpv6 || ip.hop_limit() != ON_LINK {
+        return None;
+    }
+    let icmp = Icmpv6Packet::new_checked(ip.payload()).ok()?;
+    match Icmpv6Repr::parse(&ip.src_addr(), &ip.dst_addr(), &icmp, &checksums()).ok()? {
+        Icmpv6Repr::Ndisc(NdiscRepr::NeighborSolicit { target_addr, lladdr }) if !target_addr.is_multicast() => {
+            Some(Solicitation {
+                from: ip.src_addr(),
+                target: target_addr,
+                lladdr: lladdr
+                    .filter(|l| l.len() == 6)
+                    .map(|l| EthernetAddress::from_bytes(l.as_bytes())),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The group solicitations for `address` are sent to, and its Ethernet
+/// address: the solicited-node multicast group (RFC 4291, 2.7.1).
+pub fn solicited_node(address: Ipv6Addr) -> (Ipv6Addr, EthernetAddress) {
+    let [.., a, b, c] = address.octets();
+    let group = Ipv6Addr::from([0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xff, a, b, c]);
+    (group, EthernetAddress([0x33, 0x33, 0xff, a, b, c]))
+}
+
+/// The answer to `to`'s neighbour solicitation: `target` is at `mac`, and
+/// is a router or not. A router that answers as anything else stops being
+/// one: hosts drop their routes through it (RFC 4861, 7.2.5).
+pub fn neighbor_advert(target: Ipv6Addr, to: Ipv6Addr, mac: EthernetAddress, router: bool) -> Vec<u8> {
+    let mut flags = NdiscNeighborFlags::SOLICITED | NdiscNeighborFlags::OVERRIDE;
+    flags.set(NdiscNeighborFlags::ROUTER, router);
+    let advert = Icmpv6Repr::Ndisc(NdiscRepr::NeighborAdvert {
+        flags,
+        target_addr: target,
+        lladdr: Some(mac.into()),
+    });
+    ip(target.into(), to.into(), IpProtocol::Icmpv6, ON_LINK, advert.buffer_len(), |buf| {
+        advert.emit(&target, &to, &mut Icmpv6Packet::new_unchecked(buf), &checksums())
     })
     .expect("both ends are IPv6")
 }
@@ -461,22 +560,100 @@ mod tests {
         ip(GUEST6, FAR6, protocol, TTL, payload.len(), |buf| buf.copy_from_slice(payload)).unwrap()
     }
 
+    const ROUTER: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2);
+    const MAC: EthernetAddress = EthernetAddress([0x52, 0x55, 0x0a, 0x00, 0x02, 0x02]);
+
     #[test]
     fn router_advertisements() {
-        let router = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2);
-        let prefix = Ipv6Addr::new(0xfdca, 0xc697, 0x4c23, 0, 0, 0, 0, 0);
-        let mac = EthernetAddress([0x52, 0x55, 0x0a, 0x00, 0x02, 0x02]);
-        let advert = router_advert(router, mac, prefix, Duration::from_secs(1800));
+        let advert = router_advert(ROUTER, MAC, Duration::from_secs(1800));
         let (ip, icmp) = icmpv6(&advert);
-        assert_eq!((ip.src_addr(), ip.dst_addr(), ip.hop_limit()), (router, IPV6_LINK_LOCAL_ALL_NODES, 255));
-        let repr = Icmpv6Repr::parse(&router, &ip.dst_addr(), &icmp, &checksums()).unwrap();
-        let Icmpv6Repr::Ndisc(NdiscRepr::RouterAdvert { router_lifetime, lladdr, prefix_info: Some(info), .. }) = repr else {
+        assert_eq!((ip.src_addr(), ip.dst_addr(), ip.hop_limit()), (ROUTER, IPV6_LINK_LOCAL_ALL_NODES, 255));
+        let repr = Icmpv6Repr::parse(&ROUTER, &ip.dst_addr(), &icmp, &checksums()).unwrap();
+        let Icmpv6Repr::Ndisc(NdiscRepr::RouterAdvert { router_lifetime, lladdr, flags, prefix_info, .. }) = repr else {
             panic!("not an advertisement: {repr:?}");
         };
         assert_eq!(router_lifetime, smoltcp::time::Duration::from_secs(1800));
-        assert_eq!(lladdr, Some(mac.into()));
-        assert_eq!((info.prefix, info.prefix_len), (prefix, 64));
-        assert!(info.flags.contains(NdiscPrefixInfoFlags::ON_LINK | NdiscPrefixInfoFlags::ADDRCONF));
-        assert_eq!(info.valid_lifetime.secs(), u64::from(u32::MAX)); // for good
+        assert_eq!(lladdr, Some(MAC.into()));
+        assert_eq!((flags, prefix_info), (NdiscRouterFlags::MANAGED, None)); // DHCPv6, and no prefix
+    }
+
+    /// A neighbour solicitation from an upstream router, with this hop limit.
+    fn solicitation(target: Ipv6Addr, to: Ipv6Addr, hop_limit: u8) -> Vec<u8> {
+        let router = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        let solicit = Icmpv6Repr::Ndisc(NdiscRepr::NeighborSolicit { target_addr: target, lladdr: Some(MAC.into()) });
+        ip(router.into(), to.into(), IpProtocol::Icmpv6, hop_limit, solicit.buffer_len(), |buf| {
+            solicit.emit(&router, &to, &mut Icmpv6Packet::new_unchecked(buf), &checksums())
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn neighbour_discovery_upstream() {
+        let ours = Ipv6Addr::new(0x2001, 0xdb8, 1, 2, 1, 0xabcd, 0x1234, 0x5678);
+        // Multicast to the address's solicited-node group, or, checking it is
+        // still there, unicast to the address itself.
+        let (group, group_mac) = solicited_node(ours);
+        assert_eq!(group, "ff02::1:ff34:5678".parse::<Ipv6Addr>().unwrap());
+        assert_eq!(group_mac, EthernetAddress([0x33, 0x33, 0xff, 0x34, 0x56, 0x78]));
+        let asked = neighbor_solicitation(&solicitation(ours, group, 255)).unwrap();
+        assert_eq!((asked.target, asked.lladdr), (ours, Some(MAC)));
+        assert!(neighbor_solicitation(&solicitation(ours, ours, 255)).is_some());
+        assert!(neighbor_solicitation(&solicitation(ours, ours, 64)).is_none()); // it crossed a router: forged
+        let mut broken = solicitation(ours, ours, 255);
+        *broken.last_mut().unwrap() ^= 1;
+        assert!(neighbor_solicitation(&broken).is_none());
+
+        let mine = EthernetAddress([0x00, 0x6c, 0x70, 0x12, 0x1a, 0x36]);
+        let advert = neighbor_advert(ours, asked.from, mine, false);
+        let (ip, icmp) = icmpv6(&advert);
+        assert_eq!((ip.src_addr(), ip.dst_addr(), ip.hop_limit()), (ours, asked.from, 255));
+        let repr = Icmpv6Repr::parse(&ours, &asked.from, &icmp, &checksums()).unwrap();
+        let Icmpv6Repr::Ndisc(NdiscRepr::NeighborAdvert { flags, target_addr, lladdr }) = repr else {
+            panic!("not an advertisement: {repr:?}");
+        };
+        assert_eq!((target_addr, lladdr), (ours, Some(mine.into())));
+        assert_eq!(flags, NdiscNeighborFlags::SOLICITED | NdiscNeighborFlags::OVERRIDE); // and no router
+
+        // The gateway, answering the guest, says it is a router: or the guest
+        // takes it for one no longer, and drops its way out.
+        let advert = neighbor_advert(ROUTER, asked.from, MAC, true);
+        let (_, icmp) = icmpv6(&advert);
+        let repr = Icmpv6Repr::parse(&ROUTER, &asked.from, &icmp, &checksums()).unwrap();
+        let Icmpv6Repr::Ndisc(NdiscRepr::NeighborAdvert { flags, .. }) = repr else {
+            panic!("not an advertisement: {repr:?}");
+        };
+        let all = NdiscNeighborFlags::ROUTER | NdiscNeighborFlags::SOLICITED | NdiscNeighborFlags::OVERRIDE;
+        assert_eq!(flags, all);
+    }
+
+    #[test]
+    fn arp_answered() {
+        let (guest, gateway) = (Ipv4Addr::new(10, 0, 2, 15), Ipv4Addr::new(10, 0, 2, 2));
+        let guest_mac = EthernetAddress([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        let request = ArpRepr::EthernetIpv4 {
+            operation: ArpOperation::Request,
+            source_hardware_addr: guest_mac,
+            source_protocol_addr: guest,
+            target_hardware_addr: EthernetAddress([0; 6]),
+            target_protocol_addr: gateway,
+        };
+        let mut bytes = vec![0; request.buffer_len()];
+        request.emit(&mut ArpPacket::new_unchecked(&mut bytes[..]));
+        let asked = arp_request(&bytes).unwrap();
+        assert_eq!((asked.from, asked.mac, asked.target), (guest, guest_mac, gateway));
+
+        let frame = arp_reply(&asked, MAC);
+        let ethernet = EthernetFrame::new_checked(&frame[..]).unwrap();
+        assert_eq!((ethernet.dst_addr(), ethernet.src_addr()), (guest_mac, MAC));
+        assert_eq!(ethernet.ethertype(), EthernetProtocol::Arp);
+        let reply = ArpRepr::parse(&ArpPacket::new_checked(ethernet.payload()).unwrap()).unwrap();
+        let ArpRepr::EthernetIpv4 { operation, source_hardware_addr, source_protocol_addr, target_protocol_addr, .. } =
+            reply
+        else {
+            panic!("not IPv4 over Ethernet: {reply:?}");
+        };
+        assert_eq!((operation, source_hardware_addr), (ArpOperation::Reply, MAC));
+        assert_eq!((source_protocol_addr, target_protocol_addr), (gateway, guest));
+        assert!(arp_request(ethernet.payload()).is_none()); // a reply is not a question
     }
 }

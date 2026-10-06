@@ -1,8 +1,8 @@
-//! The relay end to end: a smoltcp guest (10.0.2.15, and an IPv6 address it
-//! makes from the gateway's advertisements; its own Ethernet, ARP and
-//! neighbour discovery) talks over a real WebSocket and the sealed channel to
-//! a relay in this process, which reaches services on this machine through
-//! aliases: 192.0.2.10 → 127.0.0.1, 2001:db8::10 → ::1.
+//! The relay end to end: a smoltcp guest (10.0.2.15, and the IPv6 address
+//! the gateway hands it by DHCPv6; its own Ethernet, ARP and neighbour
+//! discovery) talks over a real WebSocket and the sealed channel to a relay
+//! in this process, which reaches services on this machine through aliases:
+//! 192.0.2.10 → 127.0.0.1, 2001:db8::10 → ::1.
 
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -12,15 +12,15 @@ use std::time::{Duration, Instant as Clock};
 
 use futures_util::{SinkExt, StreamExt};
 use relay::channel::{Connecting, HELLO, WELCOME};
-use relay::session::{GATEWAY, GATEWAY_MAC, GATEWAY6, GUEST, PREFIX};
-use relay::{Config, Shared, server, token};
+use relay::session::{GATEWAY, GATEWAY_LINK, GATEWAY_MAC, GATEWAY6, GUEST, PREFIX};
+use relay::{Config, Shared, dhcp, server, token};
 use smoltcp::iface::{Config as IfaceConfig, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{ChecksumCapabilities, Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::{tcp, udp};
 use smoltcp::time::Instant;
 use smoltcp::wire::{
     EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, HardwareAddress, Icmpv4Packet, Icmpv4Repr,
-    Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, IpRepr, Ipv4Packet, Ipv6Cidr, Ipv6Packet,
+    Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
@@ -32,6 +32,8 @@ const SESSION_KEY: [u8; 32] = [0x33; 32];
 const SERVICES: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const SERVICES6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x10);
 const GUEST_MAC: EthernetAddress = EthernetAddress([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+/// The guest's link-local address, from its MAC (EUI-64), as Linux makes it.
+const GUEST_LINK: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x5054, 0x00ff, 0xfe12, 0x3456);
 const BULK: usize = 16 << 20;
 
 /// One family of addresses, for what the tests try in both.
@@ -127,7 +129,7 @@ async fn relay_with(more: &str) -> SocketAddr {
         "33".repeat(32)
     ))
     .unwrap();
-    let (address, serving) = server::bind(Shared::new(config).unwrap()).await.unwrap();
+    let (address, serving) = server::bind(Shared::new(config, None).unwrap()).await.unwrap();
     tokio::spawn(serving);
     address
 }
@@ -261,14 +263,11 @@ impl Guest {
         closed: Arc<Mutex<Option<u16>>>,
     ) -> Self {
         let mut wire = Wire::default();
-        let mut config = IfaceConfig::new(HardwareAddress::Ethernet(GUEST_MAC));
-        config.slaac = true; // it solicits, and makes its address from the advertisement
+        let config = IfaceConfig::new(HardwareAddress::Ethernet(GUEST_MAC));
         let mut iface = Interface::new(config, &mut wire, Instant::ZERO);
-        let link = Ipv6Cidr::new(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0), 64);
-        let link_local = Ipv6Cidr::from_link_prefix(&link, HardwareAddress::Ethernet(GUEST_MAC)).unwrap();
         iface.update_ip_addrs(|a| {
             a.push(IpCidr::new(GUEST.into(), 24)).unwrap();
-            a.push(link_local.into()).unwrap();
+            a.push(IpCidr::new(GUEST_LINK.into(), 64)).unwrap();
         });
         Self {
             iface,
@@ -288,15 +287,49 @@ impl Guest {
         Instant::from_micros(self.started.elapsed().as_micros() as i64)
     }
 
-    /// Comes up as Linux does behind the relay: an IPv6 address and route
-    /// from the gateway's advertisement, then the IPv4 route. In that order:
-    /// smoltcp's SLAAC adds no route while there is an IPv4 one.
+    /// Comes up as Linux does behind the relay: the gateway advertises
+    /// itself, and that addresses are to be asked for; the guest asks, the
+    /// way udhcpc6 does — solicit, advertise, request, reply — and takes the
+    /// gateway as its way out in both families.
     async fn boot(mut self) -> Self {
-        self.until(Duration::from_secs(5), |g| g.ipv6())
+        self.until(Duration::from_secs(5), |g| g.advertised().then_some(()))
             .await
-            .expect("an IPv6 address, from the advertisement");
+            .expect("the gateway's advertisement, saying to ask for an address");
+        let advert = self.dhcpv6(SOLICIT, &[]).await.expect("an advertise");
+        assert_eq!(advert[0], ADVERTISE);
+        let server = dhcpv6_option(&advert, SERVER_ID).expect("the server's DUID");
+        let reply = self.dhcpv6(REQUEST, &[(SERVER_ID, &server)]).await.expect("a reply");
+        assert_eq!(reply[0], REPLY);
+        let address = dhcpv6_lease(&reply).expect("an address, for the guest's IA_NA");
+        self.iface.update_ip_addrs(|a| a.push(IpCidr::new(address.into(), 128)).unwrap());
+        self.iface.routes_mut().add_default_ipv6_route(GATEWAY_LINK).unwrap();
         self.iface.routes_mut().add_default_ipv4_route(GATEWAY).unwrap();
         self
+    }
+
+    /// Whether the gateway has advertised itself (type 134), with the M flag.
+    fn advertised(&self) -> bool {
+        self.icmp()
+            .any(|(from, message)| from == IpAddr::V6(GATEWAY_LINK) && message[0] == 134 && message[5] & 0x80 != 0)
+    }
+
+    /// Sends the gateway a DHCPv6 message of this type, from the guest's
+    /// link-local address, and waits for its answer.
+    async fn dhcpv6(&mut self, kind: u8, more: &[(u16, &[u8])]) -> Option<Vec<u8>> {
+        let buffer = || udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2048]);
+        let mut socket = udp::Socket::new(buffer(), buffer());
+        socket.bind((IpAddress::from(GUEST_LINK), dhcp::CLIENT)).unwrap();
+        socket.send_slice(&dhcpv6_message(kind, more), (IpAddress::from(dhcp::SERVERS), dhcp::SERVER)).unwrap();
+        let handle = self.sockets.add(socket);
+        let mut buf = [0; 2048];
+        let answer = self
+            .until(Duration::from_secs(5), |g| {
+                let socket = g.sockets.get_mut::<udp::Socket>(handle);
+                socket.recv_slice(&mut buf).ok().map(|(n, _)| buf[..n].to_vec())
+            })
+            .await;
+        self.sockets.remove(handle);
+        answer
     }
 
     fn ipv6(&self) -> Option<IpAddr> {
@@ -312,17 +345,6 @@ impl Guest {
             V4 => GUEST.into(),
             V6 => self.ipv6().expect("up"),
         }
-    }
-
-    /// Introduces the guest and the gateway: a connection to port 1, turned
-    /// away, leaves each with the other's MAC address.
-    async fn meet_the_gateway(&mut self, family: Family) {
-        let handle = self.tcp((family.gateway(), 1));
-        self.until(Duration::from_secs(5), |g| {
-            (g.socket(handle).state() == tcp::State::Closed).then_some(())
-        })
-        .await
-        .expect("turned away");
     }
 
     fn tcp(&mut self, to: (IpAddr, u16)) -> SocketHandle {
@@ -472,6 +494,53 @@ fn echo_frame(from: IpAddr, to: IpAddr, hop_limit: u8, ident: u16, seq_no: u16) 
     frame
 }
 
+// DHCPv6, as much as the guest speaks.
+const SOLICIT: u8 = 1;
+const ADVERTISE: u8 = 2;
+const REQUEST: u8 = 3;
+const REPLY: u8 = 7;
+const CLIENT_ID: u16 = 1;
+const SERVER_ID: u16 = 2;
+const IA_NA: u16 = 3;
+const IA_ADDR: u16 = 5;
+
+/// A DHCPv6 message from the guest: its client ID (DUID-LL, from its MAC),
+/// an IA_NA to fill in, and `more`.
+fn dhcpv6_message(kind: u8, more: &[(u16, &[u8])]) -> Vec<u8> {
+    let client = [&[0, 3, 0, 1][..], &GUEST_MAC.0].concat();
+    let ia = [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+    let options = [(CLIENT_ID, &client[..]), (IA_NA, &ia[..])].into_iter().chain(more.iter().copied());
+    let mut message = vec![kind, 0x12, 0x34, 0x56];
+    for (code, data) in options {
+        message.extend(code.to_be_bytes());
+        message.extend((data.len() as u16).to_be_bytes());
+        message.extend(data);
+    }
+    message
+}
+
+/// The options in `bytes`, by code.
+fn dhcpv6_options(mut bytes: &[u8]) -> Vec<(u16, &[u8])> {
+    let mut options = Vec::new();
+    while bytes.len() >= 4 {
+        let len = usize::from(u16::from_be_bytes([bytes[2], bytes[3]]));
+        options.push((u16::from_be_bytes([bytes[0], bytes[1]]), &bytes[4..4 + len]));
+        bytes = &bytes[4 + len..];
+    }
+    options
+}
+
+fn dhcpv6_option(message: &[u8], code: u16) -> Option<Vec<u8>> {
+    dhcpv6_options(&message[4..]).into_iter().find(|&(c, _)| c == code).map(|(_, data)| data.to_vec())
+}
+
+/// The address a DHCPv6 answer leases the guest.
+fn dhcpv6_lease(message: &[u8]) -> Option<Ipv6Addr> {
+    let ia = dhcpv6_option(message, IA_NA)?;
+    let (_, lease) = dhcpv6_options(&ia[12..]).into_iter().find(|&(c, _)| c == IA_ADDR)?;
+    Some(Ipv6Addr::from(<[u8; 16]>::try_from(&lease[..16]).ok()?))
+}
+
 /// A DNS query for `name`, of this record type.
 fn query(id: u16, name: &str, kind: u16) -> Vec<u8> {
     let mut query = [&id.to_be_bytes()[..], &[0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]].concat();
@@ -538,13 +607,51 @@ async fn closed_port(on: IpAddr) -> u16 {
 // ─── the tests ───────────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_guest_makes_its_own_ipv6_address() {
+async fn each_guest_is_given_an_ipv6_address_of_its_own() {
     let relay = relay().await;
-    let guest = connect(relay, KEY).await.unwrap();
-    let address = guest.address(V6);
-    // The prefix, then an identifier from the MAC address (EUI-64).
-    let [a, b, c, ..] = PREFIX.segments();
-    assert_eq!(address, Ipv6Addr::new(a, b, c, 0, 0x5054, 0x00ff, 0xfe12, 0x3456));
+    // Two guests alike to the last bit, as every visitor's machine is: the
+    // same snapshot, the same MAC address.
+    let (one, two) = (connect(relay, KEY).await.unwrap(), connect(relay, KEY).await.unwrap());
+    let (one, two) = (one.address(V6), two.address(V6));
+    assert_ne!(one, two);
+    for address in [one, two] {
+        let IpAddr::V6(address) = address else { panic!("{address}: not IPv6") };
+        assert_eq!(address.segments()[..4], PREFIX.segments()[..4]); // the relay's own, without a public prefix
+    }
+}
+
+/// Seen from out there, a session with a public address is that address.
+/// The host has to take the prefix in, as the deployment does; CI does too:
+/// `ip -6 route add local 2001:db8:5::/64 dev lo`.
+#[cfg(target_os = "linux")]
+#[ignore = "needs an AnyIP route: ip -6 route add local 2001:db8:5::/64 dev lo"]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_public_address_is_the_way_out() {
+    let relay = relay_with("[egress]\nipv6 = \"2001:db8:5::/64\"").await;
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let IpAddr::V6(address) = guest.address(V6) else { unreachable!() };
+    assert_eq!(address.segments()[..4], [0x2001, 0xdb8, 5, 0]);
+
+    // A service that says who it sees.
+    let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (mut stream, peer) = listener.accept().await.unwrap();
+        stream.write_all(peer.ip().to_string().as_bytes()).await.unwrap();
+    });
+    let handle = guest.tcp((V6.services(), port));
+    let (mut seen, mut buf) = (Vec::new(), [0; 64]);
+    guest
+        .until(Duration::from_secs(5), |g| {
+            let socket = g.socket(handle);
+            while let Ok(n @ 1..) = socket.recv_slice(&mut buf) {
+                seen.extend_from_slice(&buf[..n]);
+            }
+            finished(socket).then_some(())
+        })
+        .await
+        .expect("the service says, and hangs up");
+    assert_eq!(String::from_utf8_lossy(&seen), address.to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -722,14 +829,34 @@ async fn the_gateway_answers_ping_over_ipv6() {
     gateway_ping(V6).await;
 }
 
+/// The first ping, too: the gateway knows the guest's MAC address from its
+/// first frame, and asks nobody before it answers.
 async fn gateway_ping(family: Family) {
     let relay = relay().await;
     let mut guest = connect(relay, KEY).await.unwrap();
-    guest.meet_the_gateway(family).await;
     let from = guest.address(family);
     guest.to_relay.send(echo_frame(from, family.gateway(), 64, 7, 1)).unwrap();
     let echoed = guest.until(Duration::from_secs(5), |g| g.echoed(family, 7, 1)).await;
     assert_eq!(echoed, Some((family.gateway(), b"out there".to_vec())));
+}
+
+/// Asked where it is, the gateway says it is a router: answering as anything
+/// else, it would stop being one, and Linux would drop its way out with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gateway_answers_as_a_router() {
+    let relay = relay().await;
+    let mut guest = connect(relay, KEY).await.unwrap();
+    let handle = guest.tcp((V6.gateway(), 1)); // by way of fe80::2, which the guest asks after first
+    guest
+        .until(Duration::from_secs(5), |g| (g.socket(handle).state() == tcp::State::Closed).then_some(()))
+        .await
+        .expect("turned away");
+    let advert = guest
+        .icmp()
+        .find(|&(from, message)| from == IpAddr::V6(GATEWAY_LINK) && message[0] == 136)
+        .map(|(_, message)| message[4])
+        .expect("the gateway's neighbour advertisement");
+    assert_eq!(advert & 0xe0, 0xe0); // router, solicited, override
 }
 
 #[tokio::test(flavor = "multi_thread")]

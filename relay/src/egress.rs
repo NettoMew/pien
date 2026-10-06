@@ -1,11 +1,15 @@
 //! Out into the world, in the family the destination is in: TCP directly, or
-//! through a SOCKS5 proxy; UDP and ICMP always directly.
+//! through a SOCKS5 proxy; UDP and ICMP always directly. Over IPv6, from the
+//! session's own address when it has a public one (addresses.rs) — which the
+//! host takes in but does not hold, so the sockets bind to it freely
+//! (IPV6_FREEBIND) — and otherwise from wherever the host picks.
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::{TcpSocket, UdpSocket};
 
 use crate::config::Egress;
 
@@ -21,7 +25,7 @@ pub enum Failure {
     Unreachable,
 }
 
-pub async fn tcp(egress: &Egress, to: SocketAddr) -> Result<Box<dyn Stream>, Failure> {
+pub async fn tcp(egress: &Egress, to: SocketAddr, from: Option<Ipv6Addr>) -> Result<Box<dyn Stream>, Failure> {
     match egress.socks5 {
         Some(proxy) => {
             let stream = tokio_socks::tcp::Socks5Stream::connect(proxy, to)
@@ -33,22 +37,22 @@ pub async fn tcp(egress: &Egress, to: SocketAddr) -> Result<Box<dyn Stream>, Fai
             Ok(Box::new(stream))
         }
         None => {
-            let stream = TcpStream::connect(to).await.map_err(|e| match e.kind() {
-                io::ErrorKind::ConnectionRefused => Failure::Refused,
-                _ => Failure::Unreachable,
-            })?;
+            let socket = socket(to, Type::STREAM, None, from).map_err(|_| Failure::Unreachable)?;
+            let stream = TcpSocket::from_std_stream(socket.into())
+                .connect(to)
+                .await
+                .map_err(|e| match e.kind() {
+                    io::ErrorKind::ConnectionRefused => Failure::Refused,
+                    _ => Failure::Unreachable,
+                })?;
             let _ = stream.set_nodelay(true);
             Ok(Box::new(stream))
         }
     }
 }
 
-pub async fn udp(to: SocketAddr) -> io::Result<UdpSocket> {
-    let anywhere: IpAddr = match to {
-        SocketAddr::V4(_) => Ipv4Addr::UNSPECIFIED.into(),
-        SocketAddr::V6(_) => Ipv6Addr::UNSPECIFIED.into(),
-    };
-    let socket = UdpSocket::bind((anywhere, 0)).await?;
+pub async fn udp(to: SocketAddr, from: Option<Ipv6Addr>) -> io::Result<UdpSocket> {
+    let socket = UdpSocket::from_std(socket(to, Type::DGRAM, Some(Protocol::UDP), from)?.into())?;
     socket.connect(to).await?;
     Ok(socket)
 }
@@ -58,22 +62,31 @@ pub async fn udp(to: SocketAddr) -> io::Result<UdpSocket> {
 /// containers — which rules over both families. The kernel fills in the
 /// identifier and checksum.
 #[cfg(target_os = "linux")]
-pub fn ping(to: IpAddr) -> io::Result<UdpSocket> {
-    use socket2::{Domain, Protocol, Socket, Type};
-    let (domain, protocol) = match to {
-        IpAddr::V4(_) => (Domain::IPV4, Protocol::ICMPV4),
-        IpAddr::V6(_) => (Domain::IPV6, Protocol::ICMPV6),
-    };
-    let socket = Socket::new(domain, Type::DGRAM, Some(protocol))?;
-    socket.set_nonblocking(true)?;
-    socket.connect(&SocketAddr::new(to, 0).into())?;
+pub fn ping(to: IpAddr, from: Option<Ipv6Addr>) -> io::Result<UdpSocket> {
+    let protocol = if to.is_ipv6() { Protocol::ICMPV6 } else { Protocol::ICMPV4 };
+    let to = SocketAddr::new(to, 0);
+    let socket = socket(to, Type::DGRAM, Some(protocol), from)?;
+    socket.connect(&to.into())?;
     UdpSocket::from_std(socket.into())
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn ping(_: IpAddr) -> io::Result<UdpSocket> {
+pub fn ping(_: IpAddr, _: Option<Ipv6Addr>) -> io::Result<UdpSocket> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "ICMP needs Linux ping sockets",
     ))
+}
+
+/// A non-blocking socket in `to`'s family; over IPv6 bound to `from`, if
+/// there is one, and otherwise left for connecting to bind.
+fn socket(to: SocketAddr, kind: Type, protocol: Option<Protocol>, from: Option<Ipv6Addr>) -> io::Result<Socket> {
+    let socket = Socket::new(Domain::for_address(to), kind, protocol)?;
+    socket.set_nonblocking(true)?;
+    if let (SocketAddr::V6(_), Some(from)) = (to, from) {
+        #[cfg(target_os = "linux")]
+        socket.set_freebind_v6(true)?;
+        socket.bind(&SocketAddr::from((from, 0)).into())?;
+    }
+    Ok(socket)
 }

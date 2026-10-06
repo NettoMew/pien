@@ -6,10 +6,10 @@
 use std::sync::atomic::Ordering;
 
 use relay::server::{self, bytes};
+use relay::uplink::{self, Uplink};
 use relay::{Config, Shared};
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let arg = std::env::args().nth(1);
     if arg.as_deref() == Some("key") {
         let mut key = [0u8; 32];
@@ -21,21 +21,27 @@ async fn main() {
     let config = std::fs::read_to_string(&path)
         .map_err(|e| format!("{path}: {e}"))
         .and_then(|text| Config::parse(&text).map_err(|e| format!("{path}: {e}")));
-    let shared = match config.and_then(Shared::new) {
-        Ok(shared) => shared,
-        Err(error) => {
-            eprintln!("relay: {error}");
-            std::process::exit(2);
-        }
-    };
+    let config = config.unwrap_or_else(|error| fail(2, error));
+
+    // The one step that takes a privilege, while the relay is still a single
+    // thread: the uplink's socket, if there is one. Then none at all, for
+    // every thread to come (uplink.rs).
+    let uplink = config.egress.uplink.as_deref().map(|name| {
+        Uplink::open(name).unwrap_or_else(|error| fail(1, format!("egress.uplink {name}: {error}")))
+    });
+    uplink::renounce().unwrap_or_else(|error| fail(1, format!("giving up capabilities: {error}")));
+
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    runtime.block_on(serve(config, uplink));
+}
+
+async fn serve(config: Config, uplink: Option<Uplink>) {
+    let shared = Shared::new(config, uplink).unwrap_or_else(|error| fail(2, error));
     let (address, serving) = match server::bind(shared.clone()).await {
         Ok(bound) => bound,
-        Err(error) => {
-            eprintln!("relay: {}: {error}", shared.config.listen);
-            std::process::exit(1);
-        }
+        Err(error) => fail(1, format!("{}: {error}", shared.config.listen)),
     };
-    eprintln!("relay: listening on {address}");
+    eprintln!("relay: listening on {address}; {}", shared.addresses());
     tokio::select! {
         _ = serving => {}
         _ = stopped() => {}
@@ -48,6 +54,11 @@ async fn main() {
         bytes(stats.up.load(Ordering::Relaxed)),
         bytes(stats.down.load(Ordering::Relaxed))
     );
+}
+
+fn fail(code: i32, error: impl std::fmt::Display) -> ! {
+    eprintln!("relay: {error}");
+    std::process::exit(code);
 }
 
 /// Ctrl-C, or the SIGTERM that `docker stop` and systemd send. As a
