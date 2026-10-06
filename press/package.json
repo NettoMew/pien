@@ -1,7 +1,7 @@
 {
   "name": "press",
   "private": true,
-  "description": "The site's side of logging in and publishing, for guest@zutto-issho",
+  "description": "The site's side of logging in and publishing, for pien",
   "type": "module",
   "engines": {
     "node": ">=26"

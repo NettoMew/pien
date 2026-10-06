@@ -3,7 +3,7 @@ name = "warp"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Cloudflare WARP (MASQUE over HTTP/2) as a sans-I/O state machine, for the guest@home VM"
+description = "Cloudflare WARP (MASQUE over HTTP/2) as a sans-I/O state machine, for pien's guest"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

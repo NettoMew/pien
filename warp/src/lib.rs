@@ -1,4 +1,4 @@
-//! guest@zutto-issho's way onto the internet: Cloudflare WARP, spoken from the page.
+//! pien's way onto the internet: Cloudflare WARP, spoken from the page.
 //!
 //! Sealed since 2026-10-05: the page no longer loads it (docs/warp.md).
 //!

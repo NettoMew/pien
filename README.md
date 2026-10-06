@@ -1,6 +1,6 @@
-# guest@zutto-issho
+# pien
 
-一台运行在浏览器里的、真正的 Linux，当作个人主页。Alpine 3.24 用户空间，自己编译的 6.18 内核，fish 4.6，跑在 [v86](https://github.com/copy/v86) 里。
+一台运行在浏览器里的、真正的 Linux，当作个人主页。机器叫 zutto-issho，访客进来就是 `guest@zutto-issho`。Alpine 3.24 用户空间，自己编译的 6.18 内核，fish 4.6，跑在 [v86](https://github.com/copy/v86) 里。
 
 ```sh
 npm install

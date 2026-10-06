@@ -3,7 +3,7 @@ name = "relay"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "A private Ethernet segment per WebSocket, gatewayed onto the internet, for the guest@home VM"
+description = "A private Ethernet segment per WebSocket, gatewayed onto the internet, for pien's guest"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "signal"] }
