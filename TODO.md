@@ -4,7 +4,7 @@
 
 ## 先做
 
-1. **自动部署**：现在全靠手动。站点是 `SITE_URL=https://arc.moe npm run build`，把 `dist/` 换到 dmit.nrt 的 `/srv/homepage-demo/site`（旧的留成 `site.bak-<时间>`），再重启 `homepage-demo` 和 `homepage-press`；中继和 press 的镜像也是在 v2in0 上构建、手动装上的。CI 只上传 `site` 构件，还没接上发布。
+1. **部署要不要自动**：CI 已经构建并发布镜像（`ghcr.io/nettomew/pien-*`），服务器上还是手动敲一行 `pien-deploy <提交>`。要做到推上去就上线，得把一把能登录 dmit.nrt 的 SSH 密钥放进仓库的 secrets，眼下选择不放。
 2. **替换占位内容**：`content/about.md` 里的简介、GitHub、邮箱还是方括号里的占位；两篇示例文章（`markdown.md` 只是排版测试）。改种子要重建镜像，服务器上的内容仓库也要一起改。
 
 ## 接真设备试一遍

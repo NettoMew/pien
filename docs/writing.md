@@ -77,4 +77,4 @@ press 用和构建时同一套模板（`scripts/lib/blog.ts`）渲染文章页�
   data/      账号、草稿、未发布的图片
 ```
 
-press 容器多挂三处：`content → /content`、`public → /public`，以及站点所在的目录 `/srv/homepage-demo → /deploy`（只读；挂上一级，因为每次部署都会换掉 `site`）。环境变量见 `deploy/press.env.example`。nginx 容器多挂 `/srv/homepage-press/public → /srv/press`（只读）。
+press 容器多挂三处：`content → /content`、`public → /public`，以及站点所在的目录 `/srv/homepage-demo → /deploy`（只读；挂上一级，因为每次部署都会换掉 `site`），`deploy/pien-deploy` 照此建它。环境变量见 `deploy/press.env.example`。nginx 容器多挂 `/srv/homepage-press/public → /srv/press`（只读）。

@@ -74,9 +74,9 @@ npm run dev            # http://localhost:5173
 
 ## 部署
 
-代码在 https://github.com/NettoMew/pien。推到 `main` 时，`.github/workflows/build.yml` 会从零构建整站（内核、`image/tools/` 里的工具、镜像、快照、页面），跑完各项检查和 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on`、登录和写作还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们，并直接提供 press 渲染出的 `/content/` 和网页（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署)、[docs/login.md](docs/login.md#部署) 和 [docs/writing.md](docs/writing.md#部署)）。
+代码在 https://github.com/NettoMew/pien。推到 `main` 时，`.github/workflows/build.yml` 会从零构建整站（内核、`image/tools/` 里的工具、镜像、快照、页面），跑完各项检查和 Chrome 冒烟测试后，上传 `site` 构件，再把中继、press 和站点各做成一个镜像，推到 GitHub 的容器仓库（`ghcr.io/nettomew/pien-relay`、`-press`、`-site`，按提交打标签）。没变的东西不重做：npm、中继的依赖、虚拟机、内核和工具、镜像的层，都按各自的来源缓存（见 `build.yml` 开头）。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`；CI 用仓库变量 `SITE_URL`。`net on`、登录和写作还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们，并直接提供 press 渲染出的 `/content/` 和网页（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署)、[docs/login.md](docs/login.md#部署) 和 [docs/writing.md](docs/writing.md#部署)）。
 
-本站在 https://arc.moe：dmit.nrt 上的 nginx、中继、press 三个容器，前面是 Caddy 和 Cloudflare 的代理，容器之间的网络是双栈的。发布还是手动的：`SITE_URL=https://arc.moe npm run build`，把 `dist/` 换上去，旧的留一份备份，再重启 nginx 和 press 的容器（press 要按新的样式表重新渲染网页版）。
+本站在 https://arc.moe：dmit.nrt 上的 nginx、中继、press 三个容器，前面是 Caddy 和 Cloudflare 的代理，容器之间的网络是双栈的。CI 发布之后，在服务器上敲一行 `pien-deploy <提交>`（`deploy/pien-deploy`）：拉下三个镜像，换掉变了的容器，站点换上去、旧的留着，再重启 nginx 和 press（press 要按新的样式表重新渲染网页版）。
 
 ## 实测
 

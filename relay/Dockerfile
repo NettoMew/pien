@@ -11,8 +11,13 @@ FROM rust:1-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+# The dependencies first, built for a stand-in of the relay: a layer of their
+# own, which a build cache keeps until Cargo.lock changes.
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
+	&& cargo build --release --locked && rm -r src
 COPY src src
-RUN cargo build --release --locked && strip target/release/relay
+# Then the relay itself, dated after its stand-in so that cargo builds it anew.
+RUN touch src/main.rs src/lib.rs && cargo build --release --locked && strip target/release/relay
 
 FROM scratch
 COPY --from=build /src/target/release/relay /relay

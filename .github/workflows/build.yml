@@ -2,9 +2,21 @@
 # snapshot, page — checks it with pretend devices (USB, serial, Bluetooth LE),
 # a pretend folder and save dialog, passkeys in software and a real browser,
 # and hands the result over as the "site" artifact, ready for any static host
-# (public/_headers sets the cache rules). The workbench
-# and the WARP client are sealed, and built no more (docs/workbench.md,
-# docs/warp.md).
+# (public/_headers sets the cache rules). A push to main that passes all of
+# it is published as three images on GitHub's container registry, each
+# tagged with its commit and with main, for the server to pull
+# (deploy/pien-deploy): ghcr.io/nettomew/pien-relay, -press and -site. The
+# workbench and the WARP client are sealed, and built no more
+# (docs/workbench.md, docs/warp.md).
+#
+# Cached, and keyed by what they come from: npm's downloads, by the two
+# lockfiles; the relay's dependencies, built, by Cargo.lock; the machine
+# (public/vm/), by everything it is built from and the week, so that
+# Alpine's updates still come in; the kernel, the tools and Alpine's
+# packages (.cache/), by their sources, for when the machine is built anew;
+# the relay's and press's image layers, in GitHub's cache. The site's image
+# needs no cache: its layers stay the same while its files do, and the
+# registry has them already.
 
 name: build
 
@@ -13,6 +25,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -25,19 +40,18 @@ jobs:
         with:
           node-version: 26
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            press/package-lock.json
 
       - run: npm ci
-
-      # Downloads (Alpine packages, BIOS), the kernel and the tools are keyed by content.
-      - uses: actions/cache@v6
-        with:
-          path: .cache
-          key: cache-${{ hashFiles('image/kernel/**', 'image/tools/**', 'image/image.config.ts') }}
-          restore-keys: cache-
 
       # The network relay (relay/, Rust): a smoltcp guest end to end through it.
       # Its pings go out through unprivileged ping sockets, which containers
       # allow every group and this runner allows none.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
       - run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
       - run: cargo test --manifest-path relay/Cargo.toml
 
@@ -45,15 +59,37 @@ jobs:
       - run: npm ci --prefix press
       - run: npm test --prefix press
 
-      - run: npm run build:kernel
-      - run: npm run build:tools
-      - run: npm run build:vm # image, snapshot, and what Python's tools read as they start
+      # The machine, built only when something it is made of has changed, or
+      # a week has gone by.
+      - id: week
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      - id: vm
+        uses: actions/cache@v6
+        with:
+          path: public/vm
+          key: vm-${{ steps.week.outputs.week }}-${{ hashFiles('image/**', 'content/**', 'scripts/build-image.ts', 'scripts/build-state.ts', 'scripts/build-prefetch.ts', 'scripts/lib/**', 'src/machine.ts', 'src/bytes.ts', 'vm.config.ts', 'package-lock.json') }}
+      # Downloads (Alpine packages, BIOS), the kernel and the tools are keyed by content.
+      - if: steps.vm.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: .cache
+          key: cache-${{ hashFiles('image/kernel/**', 'image/tools/**', 'image/image.config.ts') }}
+          restore-keys: cache-
+      - if: steps.vm.outputs.cache-hit != 'true'
+        run: npm run build:kernel
+      - if: steps.vm.outputs.cache-hit != 'true'
+        run: npm run build:tools
+      - if: steps.vm.outputs.cache-hit != 'true'
+        run: npm run build:vm # image, snapshot, and what Python's tools read as they start
+
       - run: npm run check:usb
       - run: npm run check:serial
       - run: npm run check:ble
       - run: npm run check:files
       - run: npm run lint
       - run: npm run build # type-checks first
+        env:
+          SITE_URL: ${{ vars.SITE_URL }} # the feed's absolute links: https://arc.moe
       - run: npm run check:login # passkeys and relays, in Chrome, against the build
       - run: npm run check:writing # posts, pictures and moments from inside the machine
 
@@ -73,3 +109,67 @@ jobs:
         with:
           name: screenshots
           path: .cache/smoke
+
+  # What a push to main built, once all of it passed: its images.
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - part: relay
+            context: relay
+            cache: type=gha,scope=relay
+          - part: press
+            context: .
+            file: press/Dockerfile
+            cache: type=gha,scope=press
+          - part: site
+            context: site
+    # One publication of each image at a time, in the order of the pushes,
+    # so that main ends up on the latest.
+    concurrency: publish-${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The site's context, as deploy/site.Dockerfile has it: the file blocks
+      # apart from the rest, everything dated 1970.
+      - if: matrix.part == 'site'
+        uses: actions/download-artifact@v8
+        with:
+          name: site
+          path: dist
+      - if: matrix.part == 'site'
+        run: |
+          mkdir -p site/blocks/site/vm site/rest
+          mv dist/vm/fs site/blocks/site/vm/fs
+          mv dist site/rest/site
+          cp deploy/site.Dockerfile site/Dockerfile
+          find site -exec touch -h -d @0 {} +
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.part }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=main
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: ${{ matrix.cache }}
+          cache-to: ${{ matrix.cache && format('{0},mode=max', matrix.cache) || '' }}

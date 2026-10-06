@@ -1,0 +1,74 @@
+#!/bin/sh
+# Puts a commit that CI built and published (.github/workflows/build.yml) on
+# this machine: the relay and press on its images, and the site unpacked from
+# its own beside the one serving, which is kept.
+#
+#   pien-deploy <commit>            the seven hex digits CI tags images with
+#   pien-deploy main                what main published last
+#   pien-deploy <commit> --check    pull and unpack; change nothing that runs
+#
+# Lives on the server as /usr/local/bin/pien-deploy (docs/relay.md, 部署).
+# The containers keep the names and settings they had before CI built their
+# images: homepage-relay, homepage-press, and homepage-demo (nginx), all on
+# the Docker network homepage.
+
+set -eu
+
+images=ghcr.io/nettomew/pien
+demo=/srv/homepage-demo
+keep=3 # earlier versions of the site kept beside it
+
+tag=${1:?usage: pien-deploy <commit> [--check]}
+mode=${2:-}
+
+for part in relay press site; do
+	docker pull -q "$images-$part:$tag" > /dev/null
+done
+
+# The site, unpacked beside the one serving. Its files arrive dated 1970,
+# which is what kept unchanged layers unchanged; they are dated now, as a
+# copy would be, since nginx's ETag and Last-Modified come from that.
+rm -rf "$demo/site.new"
+box=$(docker create "$images-site:$tag" none)
+docker cp "$box:/site" "$demo/site.new"
+docker rm "$box" > /dev/null
+find "$demo/site.new" -exec touch -h {} +
+
+if [ "$mode" = --check ]; then
+	echo "$tag pulled; its site unpacks to $(du -sh "$demo/site.new" | cut -f1)"
+	rm -rf "$demo/site.new"
+	exit 0
+fi
+
+# A container is made anew only when its image changed: a relay restarted
+# drops every visitor's network. Fails, and changes nothing, otherwise.
+renew() {
+	name=$1 image=$2
+	shift 2
+	[ "$(docker inspect -f '{{.Image}}' "$name" 2> /dev/null)" != "$(docker image inspect -f '{{.Id}}' "$image")" ] || return 1
+	docker rm -f "$name" > /dev/null 2>&1 || true
+	docker run -d --name "$name" --restart unless-stopped --network homepage "$@" "$image" > /dev/null
+	echo "$name now runs $image"
+}
+
+renew homepage-relay "$images-relay:$tag" \
+	-v /srv/homepage-relay/relay.toml:/etc/relay.toml:ro || true
+
+now=$(date +%Y%m%d-%H%M%S)
+mv "$demo/site" "$demo/site.bak-$now"
+mv "$demo/site.new" "$demo/site"
+
+# press renders its pages with the site's stylesheet as it starts: a new
+# press, or the old one started again.
+renew homepage-press "$images-press:$tag" \
+	--env-file /srv/homepage-press/press.env \
+	-v /srv/homepage-press/data:/data -v /srv/homepage-press/secrets:/run/secrets:ro \
+	-v /srv/homepage-press/content:/content -v /srv/homepage-press/public:/public \
+	-v "$demo":/deploy:ro ||
+	docker restart homepage-press > /dev/null
+# nginx keeps serving the directory it started with: a bind mount follows
+# the directory, not its name.
+docker restart homepage-demo > /dev/null
+
+find "$demo" -maxdepth 1 -name 'site.bak-*' | sort -r | tail -n +$((keep + 1)) | xargs -r rm -rf
+echo "$tag is up; the site before it is site.bak-$now"

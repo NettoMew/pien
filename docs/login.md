@@ -110,15 +110,6 @@ ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
   secrets/github.secret 属主 1000，600：GitHub OAuth 的 client secret
 ```
 
-```sh
-docker run -d --name homepage-press --restart unless-stopped --network homepage \
-  --env-file /srv/homepage-press/press.env \
-  -v /srv/homepage-press/data:/data -v /srv/homepage-press/secrets:/run/secrets:ro \
-  -v /srv/homepage-press/content:/content -v /srv/homepage-press/public:/public \
-  -v /srv/homepage-demo:/deploy:ro \
-  homepage-press:<提交>
-```
-
-nginx 把 `/api/` 转给它（`deploy/nginx.conf`）。GitHub OAuth App 的回调地址是 `https://arc.moe/api/auth/github/callback`。
+容器 `homepage-press` 由 `deploy/pien-deploy` 用 CI 发布的镜像 `ghcr.io/nettomew/pien-press:<提交>` 建起来，上面这些怎么挂进去、`press.env` 怎么给，都写在脚本里（见 [relay.md](relay.md#部署)）。nginx 把 `/api/` 转给它（`deploy/nginx.conf`）。GitHub OAuth App 的回调地址是 `https://arc.moe/api/auth/github/callback`。
 
 **换会话密钥**（所有登录作废）：新密钥同时写进 `secrets/session.key` 和中继的 `relay.toml`，两个容器都重启。**换 GitHub 密钥**：写进 `secrets/github.secret`，重启 press。
