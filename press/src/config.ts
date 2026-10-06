@@ -1,7 +1,10 @@
 // What press needs to know, from its environment (deploy/press.env.example):
 //
-//   PRESS_SITE                 where the site lives, https://arc.moe: passkeys
-//                              belong to its host, GitHub comes back to it
+//   PRESS_SITE                 where the site lives, https://www.arc.moe:
+//                              GitHub comes back to it
+//   PRESS_RP_ID                the domain passkeys belong to: the site's host,
+//                              or a domain above it, arc.moe for www.arc.moe,
+//                              so that they work wherever under it the site is
 //   PRESS_ORIGINS              other origins whose pages may log in too,
 //                              comma-separated: pages on the site's subdomains
 //   PRESS_OWNER                the name passkeys carry in password managers
@@ -44,10 +47,13 @@ export async function configure(env: NodeJS.ProcessEnv = process.env): Promise<C
   const sessionKey = Buffer.from(await secret(need("PRESS_SESSION_KEY_FILE")), "hex");
   if (sessionKey.length !== 32) fail("PRESS_SESSION_KEY_FILE: 64 hex digits, from `relay key`");
   const clientId = env.PRESS_GITHUB_CLIENT_ID;
+  const siteHost = new URL(site).hostname;
+  const rpId = env.PRESS_RP_ID || siteHost;
+  if (rpId !== siteHost && !siteHost.endsWith(`.${rpId}`)) fail(`PRESS_RP_ID: ${rpId} is neither ${siteHost} nor a domain above it`);
   return {
     site,
     origins: [site, ...(env.PRESS_ORIGINS ?? "").split(",").filter(Boolean).map((origin) => new URL(origin).origin)],
-    rpId: new URL(site).hostname,
+    rpId,
     owner: env.PRESS_OWNER || "owner",
     listen: { host, port: Number(port) },
     data: need("PRESS_DATA"),
