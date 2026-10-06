@@ -35,6 +35,9 @@ jobs:
           restore-keys: cache-
 
       # The network relay (relay/, Rust): a smoltcp guest end to end through it.
+      # Its pings go out through unprivileged ping sockets, which containers
+      # allow every group and this runner allows none.
+      - run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
       - run: cargo test --manifest-path relay/Cargo.toml
 
       # press (press/): logging in, with a passkey in software and a pretend GitHub.
