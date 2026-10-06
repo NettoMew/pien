@@ -78,6 +78,14 @@ const { promise: opened, resolve: open } = Promise.withResolvers<void>();
 /** Settles once the terminal is on screen and knows its size. */
 export { opened };
 
+// Once the visitor has typed into the terminal, the page asks before it goes.
+// In a tab, Chrome takes Ctrl+W, which shells and nano use, before the page
+// ever sees it, and would close the machine and everything in it. Typed, by
+// the visitor's own keys: what the terminal answers the guest's queries
+// with leaves through onData just as keys do.
+let typed = false;
+addEventListener("beforeunload", (event) => typed && event.preventDefault());
+
 /**
  * Puts the terminal into `host` and keeps it fitted there: a React ref
  * callback, cleanup included. The default DOM renderer: the browser lays out
@@ -86,7 +94,10 @@ export { opened };
  */
 export function mount(host: HTMLElement | null) {
   if (!host) return;
-  if (!term.element) term.open(host); // StrictMode mounts twice; a terminal opens once
+  if (!term.element) {
+    term.open(host); // StrictMode mounts twice; a terminal opens once
+    for (const typing of ["keydown", "beforeinput", "paste"]) host.addEventListener(typing, () => (typed = true));
+  }
   let frame = 0;
   const resize = new ResizeObserver(() => {
     cancelAnimationFrame(frame);

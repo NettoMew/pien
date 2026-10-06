@@ -62,6 +62,8 @@ npm run dev            # http://localhost:5173
 | `ble` 蓝牙 LE 串口 | 能 | 能 | — | — |
 | `usb`、adb、fastboot 和各家刷机工具 | 能 | 能 | — | — |
 
+在标签页里，Chrome 先把 Ctrl+T、Ctrl+W、Ctrl+N 拿去开、关标签页和窗口，页面拦不住：访客在终端里敲过东西之后，关页面前会先问一句；想让这几个键也交给终端，就把它装成应用（地址栏右边的安装按钮），或者全屏。客户机里 tio 的命令键因此是 Ctrl+G。
+
 这些接口（Web Serial、Web Bluetooth、WebUSB、File System Access）只有 Chromium 实现了；没有的时候，命令会说明白是浏览器不支持，而不是坏了。Windows 上 USB 设备还要换成 WinUSB 驱动，见 [docs/usb.md](docs/usb.md)。
 
 ## 部署
