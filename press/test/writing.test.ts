@@ -124,7 +124,7 @@ test("a picture, then a post with it: published, on the web at every width, in t
 
   assert.deepEqual(history(), ["Begins the writing", "Publishes sky"]);
   assert.equal(execFileSync("git", ["-C", places.store, "show", "--stat", "--format=", "HEAD"]).toString().includes(`media/${name}`), true, "in the same commit");
-  assert.equal((await call("PUT", "/api/posts/sky", { json: { text } })).status, 200);
+  assert.equal((await call("PUT", "/api/posts/sky", { json: { text, today: "2026-10-05" } })).status, 200);
   assert.equal(history().at(-1), "Publishes sky", "the same text again changes nothing");
   assert.equal((await call("PUT", "/api/posts/sky", { json: { text: text.replace("Blue.", "Bluer.") } })).status, 200);
   assert.equal(history().at(-1), "Revises sky");
