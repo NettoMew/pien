@@ -71,10 +71,12 @@ CONFIG_NETWORK_FILESYSTEMS=y
 CONFIG_9P_FS=y
 
 # eth0, for `net on` (docs/relay.md): IPv4 and IPv6 over a virtio network
-# card. IPv6 is the protocol alone: the guest makes its address from the
-# relay's advertisements, and nothing more of it is needed
+# card. The relay hands the guest its IPv6 address by DHCPv6, and udhcpc6,
+# as every DHCP client must, asks before it has an address to ask from:
+# through a packet socket
 CONFIG_INET=y
 CONFIG_IPV6=y
+CONFIG_PACKET=y
 CONFIG_NETDEVICES=y
 CONFIG_NET_CORE=y
 CONFIG_VIRTIO_NET=y

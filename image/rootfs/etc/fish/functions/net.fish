@@ -116,13 +116,13 @@ function __net_up --argument-names way address
     echo $dim'      ssh user@host · mtr 1.1.1.1'$n
 end
 
-# The IPv6 address the guest made from the relay's advertisement, if it made
-# one. With --wait, the advertisement has a second to come: it follows a
-# moment after eth0 comes up.
+# The IPv6 address the relay gave the guest, if it gave one. With --wait, it
+# has three seconds to come: udhcpc6 asks for it as eth0 comes up, and two
+# round trips to the relay later it is there.
 function __net_ipv6
     argparse wait -- $argv; or return
     set -l tries 1
-    set -q _flag_wait; and set tries 10
+    set -q _flag_wait; and set tries 30
     for i in (seq $tries)
         set -l address (ip -6 addr show dev eth0 scope global 2>/dev/null | string match -rg 'inet6 ([0-9a-f:]+)/')
         if set -q address[1]

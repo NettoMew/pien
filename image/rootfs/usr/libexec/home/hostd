@@ -56,6 +56,14 @@ zone() {
 	echo "$1" > /etc/timezone
 }
 
+# udhcpc6, while it still asks for an address: a way out that goes down
+# takes the question with it.
+unasked() {
+	[ -f /run/udhcpc6.pid ] || return
+	kill "$(cat /run/udhcpc6.pid)" 2> /dev/null
+	rm -f /run/udhcpc6.pid
+}
+
 # The visitor's USB devices reach the guest's vhci-hcd over USB/IP: `usbip
 # attach` connects to a usbipd over TCP and hands the connection to the
 # kernel. The usbipd here is the page, at the far end of a port of the
@@ -205,8 +213,10 @@ while read -r cmd arg; do
 		case $1 in
 		up)
 			# Down first: every way out starts afresh, IPv6 too. Coming up,
-			# the kernel asks the gateway for its advertisement, and makes
-			# an address from it if the way out gives one.
+			# the kernel hears the gateway advertise itself as the way out,
+			# and udhcpc6 asks it for an address (dhcp6), if the way out has
+			# one to give: three times, a second apart, then never mind.
+			unasked
 			ip link set eth0 down
 			ip addr flush dev eth0
 			ip link set eth0 mtu "$6" up
@@ -214,9 +224,11 @@ while read -r cmd arg; do
 			ip route add "$4" dev eth0 2> /dev/null # on-link already, unless /32
 			ip route add default via "$4"
 			echo "nameserver $5" > /etc/resolv.conf
+			udhcpc6 -f -q -n -o -t 3 -T 1 -i eth0 -s /usr/libexec/home/dhcp6 -p /run/udhcpc6.pid > /dev/null 2>&1 &
 			echo "up $2 ${3%/*}" > /run/net/state
 			;;
 		down)
+			unasked
 			ip addr flush dev eth0
 			ip link set eth0 down
 			shift

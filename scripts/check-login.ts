@@ -47,13 +47,18 @@ step("online through this site's relay, with the login");
 said = await run("net on", ["Try curl", "Offline"], 60e3);
 check("online", said.includes("Online through the relay"), said.slice(-120));
 
-step("IPv6 through the relay, from its advertisement");
+step("IPv6 through the relay, an address of the session's own by DHCPv6");
 check("an address in the relay's network", said.includes(" and fdca:c697:4c23:"), said.slice(-160));
+said = await run("ip -6 addr show dev eth0 scope global; ip -6 route show default; echo list''ed", ["listed"]);
+check("held as itself alone, a /128", /inet6 fdca:c697:4c23:[0-9a-f:]+\/128/.test(said), said.slice(-240));
+check("the gateway the way out", said.includes("default via fe80::2"), said.slice(-240));
 said = await run("ping -6 -c 1 -W 5 fdca:c697:4c23::2", ["packet loss", "ping:"]);
 check("the gateway answers", said.includes("1 packets received"), said.slice(-120));
 const status = [..."012345"].map((digit) => `HTTP ${digit}`); // not "HTTP ": the command says that
 said = await run(`curl -g -s -o /dev/null -w 'HTTP %{http_code}\\n' http://${PRESS6}/`, status, 30e3);
 check("a connection through the relay", /HTTP [1-5]\d\d/.test(said), said.slice(-80));
+said = await run("ip -6 route show default; echo list''ed", ["listed"]);
+check("still the way out, once asked after", said.includes("default via fe80::2"), said.slice(-120));
 said = await run("net off", ["Off."]);
 
 step("a relay of one's own");

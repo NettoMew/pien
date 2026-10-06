@@ -1,0 +1,8 @@
+#!/bin/sh
+# What udhcpc6 does with the gateway's answer (hostd's `net up`): the address
+# it was given becomes the guest's, as itself alone, a /128 — the session's
+# own (relay/src/addresses.rs). The way out to it is the gateway's
+# advertisement's. Every other event leaves eth0 be.
+
+[ "$1" = bound ] && ip -6 addr add "$ipv6/128" dev "$interface"
+exit 0
