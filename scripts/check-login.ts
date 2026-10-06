@@ -25,7 +25,7 @@ const { run, type, enrolmentCode, ownKey, phone, close } = await site({ relay: t
 step("the first passkey, with a code from the server");
 let said = await run("net passkey add laptop", ["Code:"]);
 check("asks for the server's code", said.includes("press enroll"));
-said = await type(enrolmentCode(), ["Added", "wrong", "Cancelled"]);
+said = await type(enrolmentCode(), ["Logged in until", "wrong", "Cancelled"]);
 check("adds the passkey, and logs in", said.includes("Added laptop") && said.includes("Logged in until"), said.slice(-80));
 
 step("out, and back in");
