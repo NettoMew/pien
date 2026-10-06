@@ -2,13 +2,13 @@
 
 > **已封存（2026-10-05）。** `warp/`、`src/warp/` 和这篇文档都原样留着，但页面不再加载 WARP 客户端，构建和 CI 不再编译它，客户机里也没有 `net warp` 和 `net forget`。线上本来就没有部署它需要的 `/warp/` 路由。
 >
-> 解封：把封存前的入口找回来（`git show 50c10d8` 下的 `image/rootfs/etc/fish/functions/net.fish`、`image/rootfs/usr/libexec/home/hostd`、`src/net/index.ts`、`src/session.ts`、`vite.config.ts`），CI 加回 `build:warp` 和 `cargo test --manifest-path warp/Cargo.toml`，再按下文部署 `/warp/edge` 和 `/warp/api/`。
+> 解封：把封存前的入口找回来（`git show 50c10d8` 下的 `image/rootfs/etc/fish/functions/net.fish`、`image/rootfs/usr/libexec/home/hostd`、`src/net/index.ts`、`src/session.ts`、`vite.config.ts`），只把 WARP 那几段合进现在的文件，不要整份盖回去：封存之后它们又多了 `net login`、`net relay` 和 IPv6。CI 加回 `build:warp` 和 `cargo test --manifest-path warp/Cargo.toml`，再部署 `/warp/edge` 和 `/warp/api/`。下文写的部署是在香港的 .100、.101 上，站点如今在 dmit.nrt；`deploy/compose.yaml` 从没进过仓库，照 [relay.md](relay.md#部署) 的部署一节改写。
 
 访客在终端里敲 `net warp`，这台虚拟机就作为一台真正的主机接入互联网，出口是 Cloudflare WARP。`curl`、`git`、真实的 `ping` 和 UDP DNS 都能用。不用我们的出口 IP，也没有开放代理。
 
-和 [network.md](network.md) 里的自建 wisp 中继相比，服务器上只剩一根「哑管道」：只能连 WARP 的一个入口，只看得到 TLS 密文。
+和 [network.md](network.md) 里的自建 wisp 中继相比（那个方案没有采用，现在用的是 [relay.md](relay.md) 的以太网中继），服务器上只剩一根「哑管道」：只能连 WARP 的一个入口，只看得到 TLS 密文。
 
-**现状（2026-10-04）**：原型已在本机跑通（W1–W4），线上还没部署（W6 待确认）。
+**封存时的状态（2026-10-04）**：原型已在本机跑通（W1–W4），线上没有部署（W6）。
 
 ## 原型实测
 
@@ -182,7 +182,7 @@ WARP_EDGE=127.0.0.1:18443 npm run dev
 
 ## 测试
 
-1. **`cargo test`**（CI 已经在跑）：用 RFC 测试向量测 QUIC 变长整数（RFC 9000）和 HPACK 的 `:status`（RFC 7541）；另外测 HTTP/2 的帧、流量控制和结束方式、ARP 应答、以太网帧的拆装、DER 证书和签名。
+1. **`cargo test`**（封存前 CI 在跑）：用 RFC 测试向量测 QUIC 变长整数（RFC 9000）和 HPACK 的 `:status`（RFC 7541）；另外测 HTTP/2 的帧、流量控制和结束方式、ARP 应答、以太网帧的拆装、DER 证书和签名。
 2. **离线端到端**（下一步）：`scripts/fake-edge.ts` 用 Node 自带的 `tls` 和 `http2` 起一个假的 WARP 入口：
    - 要求客户端证书，处理带 `cf-connect-proto` 的 CONNECT；
    - 收到 ICMP echo 就原样回复；

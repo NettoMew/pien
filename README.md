@@ -34,7 +34,7 @@ npm run dev            # http://localhost:5173
 
 ## 怎么工作的
 
-**内核**（`image/kernel/`）。在 `allnoconfig` 上只开 v86 需要的东西：四个串口（内核日志、控制通道、访客借来的串口、蓝牙 LE 串口）、virtio 控制台、经 virtio 走的 9p，USB 核心和 USB/IP 的虚拟主控制器 vhci-hcd，再加上工作台那块盘要的 IDE（`ata_piix`）、squashfs 和 overlayfs。全部编进内核，内核自己把浏览器提供的 9p 目录挂成根文件系统，不需要模块，也不需要 initramfs。编译在一次性的 Alpine 容器里进行，版本和源码校验和都固定。
+**内核**（`image/kernel/`）。在 `allnoconfig` 上只开 v86 需要的东西：四个串口（内核日志、控制通道、访客借来的串口、蓝牙 LE 串口）、virtio 控制台、经 virtio 走的 9p，virtio 网卡和 IPv4、IPv6，USB 核心和 USB/IP 的虚拟主控制器 vhci-hcd，再加上工作台那块盘要的 IDE（`ata_piix`）、squashfs 和 overlayfs。全部编进内核，内核自己把浏览器提供的 9p 目录挂成根文件系统，不需要模块，也不需要 initramfs。编译在一次性的 Alpine 容器里进行，版本和源码校验和都固定。
 
 **镜像**（`scripts/build-image.ts`）。只用 Node：读 Alpine x86 仓库的索引，解出依赖（连同 install_if 带进来的，比如每个 Python 包的字节码），解包，叠上 `image/rootfs/`、`content/` 和 `image/tools/` 里另外编译好的工具（`npm run build:tools`），输出：
 
@@ -74,7 +74,7 @@ npm run dev            # http://localhost:5173
 
 ## 部署
 
-`.github/workflows/build.yml` 会从零构建整站（内核、`image/tools/` 里的工具、镜像、快照、页面），跑完各项检查和 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on`、登录和写作还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们，并直接提供 press 渲染出的 `/content/` 和网页（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署)、[docs/login.md](docs/login.md#部署) 和 [docs/writing.md](docs/writing.md#部署)）。
+代码在 https://github.com/NettoMew/pien。推到 `main` 时，`.github/workflows/build.yml` 会从零构建整站（内核、`image/tools/` 里的工具、镜像、快照、页面），跑完各项检查和 Chrome 冒烟测试后，上传 `site` 构件。`dist/` 可以放到任意静态托管上：Cloudflare Pages、Netlify 会读取 `_headers`；用 nginx 托管时，用 `deploy/nginx.conf`，规则相同（例如挂进 `nginx:alpine` 容器的 `conf.d/default.conf`）。生成 RSS 的绝对链接需要设置 `SITE_URL`，例如 `https://example.com`。`net on`、登录和写作还需要两个容器，中继和 press，nginx 把 `/relay` 和 `/api/` 转给它们，并直接提供 press 渲染出的 `/content/` 和网页（`deploy/nginx.conf`、`deploy/relay.toml.example`、`deploy/press.env.example`，步骤见 [docs/relay.md](docs/relay.md#部署)、[docs/login.md](docs/login.md#部署) 和 [docs/writing.md](docs/writing.md#部署)）。
 
 本站在 https://arc.moe：dmit.nrt 上的 nginx、中继、press 三个容器，前面是 Caddy 和 Cloudflare 的代理，容器之间的网络是双栈的。发布还是手动的：`SITE_URL=https://arc.moe npm run build`，把 `dist/` 换上去，旧的留一份备份，再重启 nginx 和 press 的容器（press 要按新的样式表重新渲染网页版）。
 
@@ -82,12 +82,12 @@ npm run dev            # http://localhost:5173
 
 | | |
 |---|---|
-| 首次访问 | 约 6.5 MB（gzip 后）：快照 5.7 MB，v86 的 wasm 381 KB，JS 325 KB（v86 与 xterm.js 204 KB，React 等界面库 106 KB，页面自己 15 KB），CSS 5 KB；串口、蓝牙、USB、take、share 的代码用到才加载，各 2 到 4 KB |
-| 本地到出现提示符 | 1.5 秒，其中约 1 秒是开机动画；机器自己 0.3 秒就恢复好了（不含网络） |
+| 首次访问 | 约 7.1 MB（压缩后，2026-10-06 在 arc.moe 上量的）：快照 6.2 MB，JS 358 KB，v86 的 wasm 353 KB，字体 90 KB，CSS 6 KB，页面和文件索引 172 KB；串口、蓝牙、USB、take、share 的代码用到才加载，各 2 到 4 KB |
+| 本地到出现提示符 | 1.5 秒，其中约 1 秒是开机动画；机器自己 0.3 秒就恢复好了（不含网络）；从 arc.moe 打开约 3 秒 |
 | `cat blog/hello.md` | 只请求这一篇，911 B |
-| 内核 | 1.9 MB，四个串口、USB/IP；客户机可用内存 58 MB |
+| 内核 | 2.0 MB，四个串口、USB/IP、IPv6；客户机可用内存 58 MB |
 | 整个系统 | 7782 个文件块，247 MB，压缩后 70 MB，全部按需加载；其中 54 MB 是 mtkclient 给各型联发科芯片的 loader，用到哪个读哪个 |
-| `net on` | 第一次 3.8 秒（含输入口令），之后 0.7 秒；ping 1.1.1.1 约 38 ms；客户机里下载 2 MB/s |
+| `net on` | 2.3 秒，含问 Cloudflare 出口在哪；IPv6 地址同时就有；`ping -6` Cloudflare 约 76 ms（本机在香港，中继在东京） |
 | 串口 | 假线上 64 KB 在 1500000 波特下往返 1.4 秒；`sb` 往假 U-Boot 传 50 KB 1.5 秒；页面这一侧用到才加载 |
 | 程序第一次运行 | 网络延迟 100 ms 时，`adb version` 9.0 秒 → 2.7 秒（它要 57 个库），`curl --version` 2.7 秒 → 1.7 秒，`esptool version` 52.9 秒 → 15.9 秒（352 个文件）：页面把它们一起取来 |
 
@@ -151,3 +151,5 @@ npm run dev            # http://localhost:5173
 - **16550 的速度只到 115200**：默认时钟除以 16 再除以分频，分频最小是 1。`/etc/rc` 用 `setserial` 把 ttyS2 的时钟调高到 24 MHz（除以 16 之后），1500000、3000000 都成了整数分频；差一点点的（115200 这类）由页面对回标准速度。
 - **Web Serial 丢了设备时不出声**：读流出错后 `port.readable` 变成 null，读循环就静静地停了。USB 线还有 `disconnect` 事件报信，蓝牙设备走远了什么事件也没有，要到客户机下次写才会发现。读循环现在在流一个也不剩时报“坏了”，蓝牙的由页面隔一会儿重开。
 - **装好的 Python 包会在每次运行时重编字节码**：客户机里的访客写不了 `/usr/lib/python3.14`，`__pycache__` 写不进去，每次 import 都在模拟的 CPU 上从源码编一遍。Alpine 的字节码在单独的 `-pyc` 包里，靠 install_if 跟着 `pyc` 装，镜像的依赖解析因此学会了 install_if；`image/tools/python/` 装的几个包，构建时用不核对源码时间的字节码（`unchecked-hash`）编好。
+- **smoltcp 的 SLAAC 有一条 IPv4 路由就不加 IPv6 的**：它往路由表里添路由前，要确认表里没有相同的，可这个判断对 IPv4 路由一律答“不行”，于是只要先有一条 IPv4 默认路由，通告里的 IPv6 默认路由永远加不进去。中继自己不用 SLAAC；测试里扮访客的 smoltcp 要用，就先等通告配好 IPv6，再加 IPv4 路由（`relay/tests/relay.rs`）。
+- **Docker 网络改成双栈后，Caddy 拨不通 nginx**：容器名在双栈网络上解析出两个地址，Caddy 先拨 IPv6 的那个，nginx 只听 IPv4，被拒之后也不改拨，整站 502。`deploy/nginx.conf` 两个族都听。

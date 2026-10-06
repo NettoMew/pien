@@ -1,6 +1,6 @@
-# 联网方案（规划，尚未实现）
+# 联网方案（wisp，未采用）
 
-> 当前方向是 **自建以太网中继**，见 [relay.md](relay.md)；WARP 直通（[warp.md](warp.md)）保留为试验。本文的 wisp 方案只作记录。
+> **已被取代。** 这份 wisp 方案从没实现。联网用的是 Rust 写的以太网中继（`relay/`，`net on`），见 [relay.md](relay.md)；站点在 dmit.nrt 上的 https://arc.moe。WARP 直通 2026-10-05 封存（[warp.md](warp.md)）。下文的 .100、.101、test-demo.arc.moe、TypeScript 加 wisp-js 的中继、静态地址和代替 `ping` 的脚本，都只是当时的设想，留作记录。
 
 目标：访客在终端里能 `curl https://…`、`git clone`。这台机器仍然只存在于访客的浏览器里，我们的服务器也不能因此变成一个开放代理。
 

@@ -36,7 +36,7 @@ about.md
 | `moments new` | 写一条，编辑器关掉时问一句就发出去 |
 | `moments delete <编号>` | 删一条（编号补全得出来） |
 
-编辑器默认是 Microsoft Edit（`edit`）；`set EDITOR nano` 换成 nano（只在这次访问里有效，页面刷新后又是 Edit）。名字只用小写字母、数字和横线，它也是网址的一部分。草稿、文章、动态的名字都能 Tab 补全。
+编辑器默认是 Microsoft Edit（`edit`）；`set EDITOR nano` 换成 nano（只在这次访问里有效，页面刷新后又是 Edit）。名字只用小写字母、数字和横线，它也是网址的一部分。这台机器里的草稿、文章、动态，名字都能 Tab 补全（只在服务器上的草稿补不出来）。
 
 ## 图片
 
@@ -48,7 +48,7 @@ press 收到图片后：按 EXIF 摆正，**去掉其余全部 EXIF**（拍摄�
 
 由它派生：
 
-- 网页：480、960 和原宽三种 WebP，`srcset` 按屏幕选，标上宽高免得排版跳动；
+- 网页：比原图窄的 480、960，加上原宽，最多三种 WebP，`srcset` 按屏幕选，标上宽高免得排版跳动；
 - 客户机：最宽 960 的 JPEG，`~/media/` 里，用到才下载。终端里 `cat` 一篇带图的文章，图片就画在正文的宽度里，最高 18 行，下面是说明文字（md.awk 打印 iTerm2 的内联图片序列，页面用 `@xterm/addon-image` 画）。那个插件只认 PNG、JPEG 和 GIF，所以存的是 JPEG。
 
 ## 新内容怎么进到机器里（`src/content.ts`）
@@ -66,7 +66,7 @@ press 用和构建时同一套模板（`scripts/lib/blog.ts`）渲染文章页�
 ## 测试
 
 - `npm test --prefix press`：真 git 仓库、真 sharp：草稿、图片的 EXIF 和隐私、各种宽度的副本、客户机的 JPEG、发布、修订、撤下、动态、拒绝没有标题或缺图的文章、提交历史。
-- `npm run check:writing`（先 `npm run build`）：本机起 press，Chrome 登录后在客户机里拖进一张图、写一篇带图的文章、存草稿、发布、终端里画出图片、网页的 srcset、换一台刚恢复的机器照样有、发一条动态再删掉、撤下文章、登出后什么都写不了。
+- `npm run check:writing`（先 `npm run build`）：本机起 press，Chrome 登录后在客户机里用 `drop` 选进一张图、写一篇带图的文章、存草稿、发布、终端里画出图片、网页的 srcset、换一台刚恢复的机器照样有、发一条动态再删掉、撤下文章、登出后什么都写不了。
 
 ## 部署
 

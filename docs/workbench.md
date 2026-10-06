@@ -6,9 +6,10 @@
 > 1. `vm.config.ts` 里把 workbench 的 `sealed` 改回 `false`；
 > 2. 把 `image/workbench/functions/` 里的三个文件移回 `image/rootfs/etc/fish/functions/`，`help.fish` 里加回工作台的几行（封存前的版本：`git show 50c10d8:image/rootfs/etc/fish/functions/help.fish`）；
 > 3. `package.json` 的 `build:vm` 加回 `npm run build:workbench`，CI 加回构建和 `check:usb -- workbench`；
-> 4. 重新构建、部署，站点会重新带上约 740 MB 的盘。
+> 4. `scripts/smoke.ts` 里工作台那一步、`scripts/build-state.ts` 的 `functions -q` 里的 `workbench home` 也找回来（`git show dd7d064`）；
+> 5. 重新构建、部署，站点会重新带上约 740 MB 的盘。
 
-敲 `workbench`，屏幕关掉，换一台大机器开起来：768 MB 可用内存，外加一块装着工具链的盘。`home` 换回来。地址里带 `?workbench` 时直接开工作台。
+敲 `workbench`，屏幕关掉，换一台大机器开起来：768 MB 可用内存，外加一块装着工具链的盘。`home` 换回来。地址里带 `?workbench` 时直接开工作台（封存期间这个参数不起作用）。
 
 ```
 guest@zutto-issho ~> workbench

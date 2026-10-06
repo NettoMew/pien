@@ -9,7 +9,7 @@ guest@zutto-issho ~> serial
 guest@zutto-issho ~> tio -b 1500000 /dev/ttyUSB0
 ```
 
-蓝牙的叫 `/dev/rfcomm0`。两台机器上都有。第一次 `serial` 时浏览器弹出列表让访客选（手机上先点一下屏幕上浮出的那枚键），选过的之后直接用。线拔了再插、蓝牙设备走远了又回来，都会自动接回，客户机里开着的 tio 接着用。
+蓝牙的叫 `/dev/rfcomm0`。第一次 `serial` 时浏览器弹出列表让访客选（手机上先点一下屏幕上浮出的那枚键），选过的之后直接用。线拔了再插、蓝牙设备走远了又回来，都会自动接回，客户机里开着的 tio 接着用。
 
 ## 工具
 
@@ -26,7 +26,7 @@ guest@zutto-issho ~> tio -b 1500000 /dev/ttyUSB0
 
 往 U-Boot 传文件，在 tio 里敲 `loady 0x82000000`，再 Ctrl-t y 选文件；或者退出 tio（Ctrl-t q），U-Boot 还在等，`sb u-boot.itb` 就传过去了。
 
-lrzsz 不在 Alpine 里，esptool 和 mpremote 在 PyPI 上。它们各有一份固定版本的构建（`image/tools/`，`npm run build:tools`）：lrzsz 用 2026 年 10 月的 0.13.1，几十年来第一个新版，修了收发两头的老溢出；Python 那一层只装这几个包本身，按哈希核对，依赖全用 Alpine 的包，字节码在构建时编好，客户机里不用再编。
+lrzsz 不在 Alpine 里，esptool 和 mpremote 在 PyPI 上。它们各有一份固定版本的构建（`image/tools/`，`npm run build:tools`）：lrzsz 用 2026 年 10 月的 0.13.1，几十年来第一个新版，修了收发两头的老溢出；Python 那一层：PyPI 上的（esptool 和它要的 esp-pylib、rich-click，mpremote）按版本和哈希固定，只在 GitHub 上的（mtkclient、edl）按提交固定，其余依赖用 Alpine 的包；字节码在构建时编好，客户机里不用再编。
 
 ```
 tio、stty、esptool…… ──▶ /dev/ttyS2（Linux 自己的 8250 驱动）──▶ v86 模拟的 16550
@@ -92,7 +92,7 @@ guest@zutto-issho ~> mpremote connect /dev/ttyBLE0
 
 `npm run check:serial` 给客户机插几根假的线，页面这一侧用的就是 `src/serial/` 本身：
 
-- 一根转串口线，按 USB ID 是 FTDI，输出接回输入：用 stty、tio、python3 把速度、帧格式、数据、各条信号线走一遍，一起设的 DTR、RTS 一起到，没人开着时回来的字节不留；
+- 一根转串口线，按 USB ID 是 FTDI，输出接回输入：用 stty 和 python3 把速度、帧格式、数据、各条信号线走一遍（tio 只看它能不能跑），一起设的 DTR、RTS 一起到，没人开着时回来的字节不留；
 - 一块停在 U-Boot `loady` 的板子：一个 YMODEM 接收端，和 U-Boot 一样先发 `C`、按 CRC 核对每一块。`sb` 自己借到串口，把 50 KB 传过去，一字不差；
 - esptool 和 mpremote 能跑，用不着串口时不去借；
 - 一个配对过的蓝牙设备：设置和信号线都不传，字节照常走；走远了再回来会自动接回，一直开着它的程序接着写；`--uuid` 要到的是自己定服务的那一个。

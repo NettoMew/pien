@@ -1,6 +1,6 @@
 // The guest, as both the page and the snapshot builder see it: a terminal
 // stream on the virtio console (hvc0) and three more ports beside it
-// (/dev/virtio-ports/virtio-1 to -3, for adb and fastboot: src/usb/), a
+// (/dev/virtio-ports/virtio-1 to -3, which carry USB/IP: src/usb/), a
 // line-based control channel on the second serial port (ttyS1; see
 // image/rootfs/usr/libexec/home/hostd), and a network card whose frames go
 // wherever the page sends them (src/net/).

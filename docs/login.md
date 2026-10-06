@@ -34,7 +34,7 @@
 docker exec homepage-press press enroll
 ```
 
-打印一个 16 位的码（`XXXX-XXXX-XXXX-XXXX`，字母表去掉了容易看错的 0/O、1/I/L），15 分钟内有效，用一次就作废，猜错 5 次也作废。在客户机里 `net passkey add`，它会问这个码，大小写和横线都无所谓。加好以后直接就是登录状态。
+打印一个 16 位的码（`XXXX-XXXX-XXXX-XXXX`，字母表去掉了容易看错的 0/O、1/I），15 分钟内有效，用一次就作废，猜错 5 次也作废。在客户机里 `net passkey add`，它会问这个码，大小写和横线都无所谓。加好以后直接就是登录状态。
 
 以后在新设备上：`net login github`，再 `net passkey add`。
 
@@ -64,13 +64,13 @@ token     body ‖ HMAC-SHA256(会话密钥, "guest@home session v1" ‖ body)
 ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
 ```
 
-（每个词 URL 转义），页面按话题加载对应的模块（`net` → `src/net/answers.ts`），答案经控制线回去：每行一条 `said <id> <内容>`，最后 `done <id> <状态>`，hostd 写进 `/run/ask/`，`__ask` 读出来。状态 0 是好，3 是「还要一样东西」（码、中继的密钥），别的是不行。
+（每个词 URL 转义），页面按话题加载对应的模块（`net` → `src/net/answers.ts`），答案经控制线回去：每行一条 `said <id> <内容>`，最后 `done <id> <状态>`，hostd 写进 `/run/ask/`，`__ask` 读出来。状态 0 是好，3 是「还要一样东西」（码、中继的密钥；对 `blog fetch` 则是「没有这篇，新建」），别的是不行。
 
 暗号每个页面新生成一个，问候客户机时交给 hostd，存在 `/run/ask/secret`，只有 guest 自己的命令读得到。所以终端里**显示**出来的东西，比如 `cat` 一个恶意文件，没法冒充站长去问页面（`check:login` 专门试了一次）。
 
 ## press（`press/`）
 
-一个 TypeScript 小服务，Node 26 直接跑 `.ts`，唯一的依赖是 `@simplewebauthn/server`。路由是从 `Request` 到 `Response` 的函数，测试直接调用，不用起端口。
+一个 TypeScript 小服务，Node 26 直接跑 `.ts`，依赖有三个：`@simplewebauthn/server`，和写作用的 `marked`、`sharp`。路由是从 `Request` 到 `Response` 的函数，测试直接调用，不用起端口。
 
 | | |
 |---|---|
@@ -91,19 +91,21 @@ ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
 
 ## 中继
 
-本站中继只认登录（`session_key`），不再有口令。自己搭的中继认自己的密钥（`key`，`relay key` 生成）：`net relay <地址>` 第一次会问，粘贴一次以后按地址记在浏览器里；密钥不对会被忘掉，下次 `net on` 再问。详见 [relay.md](relay.md)。
+本站中继只认登录（`session_key`），不再有口令。自己搭的中继认自己的密钥（`key`，`relay key` 生成）：`net relay <地址>` 第一次会问，粘贴一次以后按地址记在浏览器里；密钥不对会被忘掉，下次 `net on` 会说缺密钥，`net relay <地址>` 再粘贴一次。详见 [relay.md](relay.md)。
 
 ## 测试
 
 - `npm test --prefix press`：软件实现的通行密钥（`press/test/authenticator.ts`，none 证明）走完注册、登录、重放、跨源、删除，加上模拟的 GitHub 走完关联和登录；token 的字节和中继对齐。
-- `npm run check:login`（要先 `npm run build`）：本机起中继和 press，`vite preview` 在前面，Chrome 的虚拟认证器扮通行密钥，在客户机里把第一个通行密钥、登出登入、列表、伪造的提问、经本站中继上网、自己的中继、错误的密钥都走一遍。CI 在跑。
+- `npm run check:login`（要先 `npm run build`）：本机起中继和 press，`vite preview` 在前面，Chrome 的虚拟认证器扮通行密钥，在客户机里把第一个通行密钥、登出登入、列表、伪造的提问、经本站中继上网（IPv6 也在内）、自己的中继、错误的密钥都走一遍，再用一个模拟的 GitHub 关联账号、登录：电脑上弹窗，手机上点那枚键，页面被回收后接过登录。CI 在跑。
 
 ## 部署
 
 ```
 /srv/homepage-press/
   press.env            deploy/press.env.example
-  data/                属主 1000：account.json
+  data/                属主 1000：account.json，以及写作的草稿和未发布的图片
+  content/             属主 1000：内容仓库（git），见 writing.md
+  public/              属主 1000：press 渲染出的网页和 /content/
   secrets/session.key  属主 1000，600：会话密钥，和中继 relay.toml 的 session_key 相同
   secrets/github.secret 属主 1000，600：GitHub OAuth 的 client secret
 ```
@@ -112,6 +114,8 @@ ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
 docker run -d --name homepage-press --restart unless-stopped --network homepage \
   --env-file /srv/homepage-press/press.env \
   -v /srv/homepage-press/data:/data -v /srv/homepage-press/secrets:/run/secrets:ro \
+  -v /srv/homepage-press/content:/content -v /srv/homepage-press/public:/public \
+  -v /srv/homepage-demo:/deploy:ro \
   homepage-press:<提交>
 ```
 
