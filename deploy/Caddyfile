@@ -9,6 +9,21 @@ example.com {
 	reverse_proxy homepage-demo:80
 }
 
+# Behind a CDN that fetches the site over HTTPS but checks no certificate,
+# as this site's is (docs/deploy.md), Caddy signs one with its own CA instead,
+# and hands it to a CDN that names no server too: in place of the block
+# above,
+#
+#   {
+#   	default_sni example.com
+#   	skip_install_trust
+#   }
+#
+#   example.com {
+#   	tls internal
+#   	reverse_proxy homepage-demo:80
+#   }
+
 # Other names of the site, sent on to the one above. Leave this out for a name
 # without a DNS record: Caddy would keep asking for a certificate it cannot get.
 www.example.com {

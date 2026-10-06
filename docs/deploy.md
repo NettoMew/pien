@@ -21,6 +21,7 @@ pien 由三样东西组成：
 - **域名**，指到服务器。在 Cloudflare 的代理后面也行：Caddy 用 HTTP-01 拿证书，代理会放行；Cloudflare 的 SSL 模式选 Full 或更严。
 - **镜像**。这个仓库的 CI 发布的 `ghcr.io/nettomew/pien-relay`、`-press`、`-site`，按提交打标签，`main` 是最新的一版；站点镜像里的文章、虚拟机里的东西都是本站的。要放自己的：fork 这个仓库，在 fork 的 Actions 页面启用工作流（fork 默认关着），在仓库的 Actions 变量里设 `SITE_URL`（比如 `https://example.com`），推到 `main`，CI 就把镜像发布到 `ghcr.io/<你>/pien-*`；包第一次推出来如果是私有的，在包的设置里改成公开，服务器才能不登录就拉。
 - **会话密钥**：press 用它签登录，中继用它验，两边必须是同一把。下面的命令先生成它、写进 press 的密钥文件，再从那个文件填进中继的配置。
+- **Docker**（走 Docker 那条路时）：Debian、Ubuntu 用发行版的或 Docker 官方的包；Alpine 是 `apk add docker && rc-update add docker default && rc-service docker start`。
 - **GitHub 登录**（可选）：在 GitHub 建一个 OAuth App，回调地址 `https://<域名>/api/auth/github/callback`，记下 client ID 和 secret。不配，就只有通行密钥。
 
 ## 用 Docker
@@ -38,6 +39,8 @@ pien 由三样东西组成：
 /srv/homepage-press/content/        属主 1000：内容仓库；第一次放仓库里的 content/（或你自己的），press 自己 git init
 /srv/homepage-press/public/         属主 1000：press 渲染的网页和 /content/
 ```
+
+前面若是一个回源走 HTTPS、却不校验证书的 CDN，Caddy 不用去申请证书，自己签一张就行：`tls internal`，再加一句 `default_sni`，`deploy/Caddyfile` 里有写法，本站就是这样（[见下](#本站)）。站点和它的通行密钥不在同一个域名下时（比如站点在 www.example.com，通行密钥想跟着整个 example.com 走），press.env 里加 `PRESS_RP_ID`。
 
 65534 和 1000 是中继和 press 的镜像里跑程序的用户。目录要在容器起来之前建好、属主设对：不然 Docker 会替你建一个 root 的空目录，press 写不进去，起不来。
 
@@ -184,24 +187,46 @@ npm ci --omit=dev --prefix /srv/pien/src/press && systemctl restart pien-press
 
 ## 本站
 
-https://arc.moe 在 dmit.nrt 上（2026-10-06 从香港的 .100、.101 搬来），用的是上面的 [Docker](#用-docker) 那条路，前面是 Cloudflare 的代理：
+对外的地址是 https://arc.moe，页面实际开在 https://www.arc.moe。2026-10-06 晚上起是这样：
 
 ```
-访客 ──https://arc.moe──▶ Cloudflare ──▶ dmit.nrt：Caddy（homepage-caddy，80、443）──▶ nginx（homepage-demo）
-                                                                    │ Docker 网络 homepage，双栈
-                                                                    ▼
-                                    homepage-relay:8095、homepage-press:8096（都不发布端口）──▶ 互联网，IPv4 和 IPv6
+访客 ──https://arc.moe──▶ Cloudflare：301 到 www.arc.moe，路径和查询串原样带着
+访客 ──https://www.arc.moe──▶ 朋友自建的 CDN（各地的节点，Let's Encrypt 的证书）
+                                  │ 回源：HTTPS，源站自签的证书，不校验
+                                  ▼
+                       香港的一台服务器：Caddy（homepage-caddy，80、443）──▶ nginx（homepage-demo）
+                                                             │ Docker 网络 homepage，双栈
+                                                             ▼
+                       homepage-relay:8095、homepage-press:8096（都不发布端口）──▶ 互联网，IPv4 和 IPv6
 ```
 
+- **arc.moe**：在 Cloudflare 上解析到一个占位地址（`192.0.2.1`，文档用的地址，从不回源），开着代理，一条跳转规则把它 301 到 www.arc.moe。RSS 和网页版里的绝对地址都写 arc.moe：仓库变量 `SITE_URL=https://arc.moe`。
+- **www.arc.moe**：朋友自建的 CDN，按地区解析到不同的节点，节点上是 Let's Encrypt 的证书。回源走 HTTPS、不校验证书；`/relay` 的 WebSocket、查询串、源站给的缓存头都照原样过。源站看到的访客地址是 CDN 节点的。
+- **服务器**：Alpine 3.24，Docker 从 apk 装，照上面 [Docker](#用-docker) 那条路搭。1 核、436 MB 内存，四个容器连 Docker 一起用 230 MB 左右。它的 IPv6 默认路由是静态配的，Docker 打开转发也丢不了。
+- **Caddy**：证书由 Caddy 自己的 CA 签（`tls internal`）；`default_sni` 让不报名字的回源请求也拿到它：
+
+  ```
+  {
+  	default_sni www.arc.moe
+  	skip_install_trust
+  }
+
+  www.arc.moe {
+  	tls internal
+  	reverse_proxy homepage-demo:80
+  }
+  ```
+
+- **press**：`PRESS_SITE=https://www.arc.moe`，GitHub 登录的回调也在 www；`PRESS_RP_ID=arc.moe`，通行密钥属于 arc.moe，搬到 www 之前注册的照样能用。
 - **中继**：以 65534（nobody）运行，配置里只有会话密钥，最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
-- **网络**：IPv4 `172.18.0.0/16`，IPv6 是一段唯一本地前缀 `fdd1:31fb:31e3::/64`（和访客的那段无关：访客的网段只在中继的进程里）。两个族出门都由宿主机做 NAT；IPv6 的那份要 Docker 自己写 ip6tables 规则，Debian 12 的 Docker 20.10 里这还算实验功能。
-- **Caddy**：只有 `arc.moe { reverse_proxy homepage-demo:80 }`。`www.arc.moe` 和原来的 `test-demo.arc.moe` 还指着香港，在那边跳转过来。
-- **nginx**：`/srv/homepage-demo/nginx.conf` 还是改成开头几行变量之前的写法，行为和现在的 `deploy/nginx.conf` 一样（逐个请求对过），下次动它时换上。
+- **网络**：IPv4 `172.18.0.0/16`，IPv6 `fdd1:31fb:31e3::/64`（和访客的网段无关：那段只在中继的进程里），两个族都由宿主机做 NAT 出去；Docker 29 默认就写 ip6tables。
 
-**网络改成双栈**（2026-10-06，做过一次）：写好 `daemon.json`，停掉四个容器，`systemctl restart docker`，把它们从 `homepage` 上摘下来，删掉网络，按上面的命令建成双栈（IPv6 子网是 `fdd1:31fb:31e3::/64`，网关 `fdd1:31fb:31e3::1`），再接回去、启动。站点停了 13 秒。当时 nginx 还只听 IPv4，Caddy 先拨 IPv6 拨不通，又报了一分半钟 502，加上 `listen [::]:80`、重载之后恢复。
+**来路**：
 
-**发布改由 CI 来做**（2026-10-06）：在那之前，中继和 press 的镜像在 v2in0 上构建、经本机中转（两台机器之间直连很慢），站点在本机构建后用 tar 传过去。最后一版本地构建的镜像 `homepage-relay:c0df391`、`homepage-press:9d7754f` 还留在机器上；要用它们回滚，得照原来的参数手动 `docker run`，`pien-deploy` 只认镜像仓库里的。
+- 2026-10-04 起，在香港的两台机器上：一台的 Caddy 在前面，另一台跑着 nginx、中继和 press。
+- 2026-10-06 白天，搬到东京的一台机器上，前面是 Cloudflare 的代理。那天在那里做的：中继有了 IPv6，Docker 网络改成双栈（站点停了 13 秒；nginx 当时只听 IPv4，Caddy 先拨 IPv6 拨不通，又报了一分半钟 502，加上 `listen [::]:80` 之后恢复）；发布改由 CI 来做（在那之前，镜像在一台构建机上构建、经本机中转，站点在本机构建后用 tar 传过去）。
+- 2026-10-06 晚上，搬到现在这台：先停了旧机器上的 press，写作就此冻结；它的数据和中继的配置照原样（属主、权限一起）搬过来，内容索引两边一致；再起容器，换上 CDN，站点改开在 www.arc.moe。
 
 **换会话密钥**（所有登录作废）：新密钥同时写进 `secrets/session.key` 和 `relay.toml`，press 和中继都重启。**换 GitHub 密钥**：写进 `secrets/github.secret`，重启 press。
 
-**回滚到香港**：那边的部署停着没删：在 .101 上启动那三个容器，arc.moe 指回香港。
+**回滚**：东京那台机器上的四个容器停着没删：启动它们，www.arc.moe 指回那里，那边的 press 数据停在搬家那一刻，之后写的要搬回去。更早的香港部署也还停在那里。

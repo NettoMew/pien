@@ -43,7 +43,7 @@ npm run dev            # http://localhost:5173
 | `cat blog/hello.md` | 只请求这一篇，911 B |
 | 内核 | 2.0 MB，四个串口、USB/IP、IPv6；客户机可用内存 58 MB |
 | 整个系统 | 7782 个文件块，247 MB，压缩后 70 MB，全部按需加载；其中 54 MB 是 mtkclient 给各型联发科芯片的 loader，用到哪个读哪个 |
-| `net on` | 2.3 秒，含问 Cloudflare 出口在哪；IPv6 地址同时就有；`ping -6` Cloudflare 约 76 ms（本机在香港，中继在东京） |
+| `net on` | 2.3 秒，含问 Cloudflare 出口在哪；IPv6 地址同时就有；`ping -6` Cloudflare 约 76 ms（本机在香港，当时的中继在东京） |
 | 串口 | 假线上 64 KB 在 1500000 波特下往返 1.4 秒；`sb` 往假 U-Boot 传 50 KB 1.5 秒；页面这一侧用到才加载 |
 | 程序第一次运行 | 网络延迟 100 ms 时，`adb version` 9.0 秒 → 2.7 秒（它要 57 个库），`curl --version` 2.7 秒 → 1.7 秒，`esptool version` 52.9 秒 → 15.9 秒（352 个文件）：页面把它们一起取来 |
 
