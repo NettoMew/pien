@@ -97,8 +97,8 @@ said = await run("blog", ["Read one"]);
 check("finds the post", said.includes("The sky"), said.slice(-160));
 said = await run("cat blog/sky.md", ["Blue."]);
 check("reads it, fetched from the site", said.includes("Blue."));
-said = await run(`ls ~/media`, [".jpg", "No such"]);
-check("and its picture", said.includes(picture ?? "-"));
+said = await run(`ls ~/media; echo list''ed`, ["listed"]);
+check("and its picture", said.includes(picture ?? "-"), said.slice(-120));
 
 step("a moment");
 await run("function scribe; echo 'Tea, in the garden.' >$argv[1]; end; set -g EDITOR scribe; echo writ''ten", ["written"]);
