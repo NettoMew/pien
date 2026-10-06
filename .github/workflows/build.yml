@@ -16,7 +16,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Named, not ubuntu-latest: a new Ubuntu arrives when this file says so.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
 
@@ -28,7 +29,7 @@ jobs:
       - run: npm ci
 
       # Downloads (Alpine packages, BIOS), the kernel and the tools are keyed by content.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .cache
           key: cache-${{ hashFiles('image/kernel/**', 'image/tools/**', 'image/image.config.ts') }}
@@ -62,12 +63,12 @@ jobs:
           until curl -sf http://localhost:4173/ > /dev/null; do sleep 0.5; done
           npm run smoke -- http://localhost:4173/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: site
           path: dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: screenshots
