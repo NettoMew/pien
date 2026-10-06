@@ -49,9 +49,9 @@ npm run dev            # http://localhost:5173
 
 ## 浏览器
 
-页面和机器在哪个现代浏览器里都能跑；接访客的设备要看浏览器给不给。
+页面和机器只用标准的 Web 接口，现代浏览器里都应该能跑，但只在 Chrome（含手机模拟）上实测过；接访客的设备，要看浏览器给不给。
 
-| | 电脑上的 Chrome、Edge | Android 上的 Chrome | Firefox | Safari（含 iOS 上的所有浏览器） |
+| | 电脑上的 Chrome、Edge | Android 上的 Chrome | Firefox（未实测） | Safari，含 iOS 上的所有浏览器（未实测） |
 |---|---|---|---|---|
 | 终端、联网、登录、写文章 | 能 | 能 | 能 | 能 |
 | `drop` 拿进文件 | 能，拖进来或选 | 能，选 | 能 | 能 |
@@ -66,15 +66,16 @@ npm run dev            # http://localhost:5173
 
 ## 部署
 
-推到 `main` 之后，GitHub Actions（`.github/workflows/build.yml`）从零构建整站，跑完各项检查和 Chrome 冒烟测试，再把中继、press 和站点各做成一个镜像，推到 GitHub 的容器仓库：`ghcr.io/nettomew/pien-relay`、`-press`、`-site`，按提交打标签。没变的东西不重做，各自按来源缓存。服务器上一行 `pien-deploy <提交>`（`deploy/pien-deploy`）换上去，见 [docs/relay.md](docs/relay.md#部署)。
+推到 `main` 之后，GitHub Actions（`.github/workflows/build.yml`）从零构建整站、跑完全部检查，再把中继、press 和站点各做成一个镜像，发布到 `ghcr.io/nettomew/pien-*`；没变的东西不重做，各自按来源缓存。
 
-只要静态页面的话，`dist/` 放到哪个静态托管上都行：Cloudflare Pages、Netlify 读 `public/_headers`，nginx 用 `deploy/nginx.conf`。RSS 的绝对链接要设 `SITE_URL`。`net on`、登录和写作还要中继和 press 两个服务（[docs/relay.md](docs/relay.md#部署)、[docs/login.md](docs/login.md#部署)、[docs/writing.md](docs/writing.md#部署)）。
+怎么部署：用 Docker、不用 Docker、只放静态站点，见 [docs/deploy.md](docs/deploy.md)。模板都在 `deploy/`：Caddy 和 nginx 的配置、systemd 服务、press 和中继的配置样例，还有更新用的 `pien-deploy`。
 
 ## 文档
 
 - [TODO.md](TODO.md)：待办和优先级
+- [docs/deploy.md](docs/deploy.md)：部署，用 Docker 或不用，和本站现在的样子
 - [CLAUDE.md](CLAUDE.md)：命令、约定、各部分怎么做的、踩过的坑
-- [docs/relay.md](docs/relay.md)：联网，中继的设计和部署
+- [docs/relay.md](docs/relay.md)：联网，中继的设计
 - [docs/login.md](docs/login.md)、[docs/writing.md](docs/writing.md)：登录，写作
 - [docs/serial.md](docs/serial.md)、[docs/usb.md](docs/usb.md)：串口、蓝牙，USB 设备
 - [docs/files.md](docs/files.md)：文件进出

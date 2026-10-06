@@ -3,10 +3,10 @@
 访客在终端里敲 `net on`，这台虚拟机就拿到一段私有的网络，IPv4 和 IPv6 都有，经中继出门：`ip a`、`curl`、`git`、真实的 `ping`、DNS 都能用。本站的中继只给站长用：先登录（[login.md](login.md)）。谁都可以搭一个自己的中继，用 `net relay <地址>` 指过去。
 
 ```
-v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层加密══▶ Caddy ──▶ relay（relay/）──▶ 互联网
-                                                                  每条连接一段私有网段：
-                                                                  10.0.2.15 访客 · 10.0.2.2 网关 · 10.0.2.3 DNS
-                                                                  fdca:c697:4c23::/64 访客自己生成地址 · ::2 网关
+v86 eth0 ──帧──▶ 页面（src/net/relay.ts）══WebSocket，内层加密══▶ Caddy ──▶ nginx ──▶ relay（relay/）──▶ 互联网
+                                                                            每条连接一段私有网段：
+                                                                            10.0.2.15 访客 · 10.0.2.2 网关 · 10.0.2.3 DNS
+                                                                            fdca:c697:4c23::/64 访客自己生成地址 · ::2 网关
 ```
 
 （另一条路 Cloudflare WARP 已封存，见 [warp.md](warp.md)。）
@@ -100,24 +100,26 @@ idle = 1800                     # 秒
 - 访客用户的 PATH 加了 `/sbin`，`ip a`、`ip route` 直接能敲。
 - 失败时说明原因：没登录、登录不被认、自己的中继缺密钥或密钥不对、中继正忙、连不上中继、连接断了……
 
-## 实测（2026-10-05，还用口令的时候；握手之后的一切没变。本机浏览器 → SSH 转发 → v2in0 上的中继容器，香港）
+## 实测
+
+2026-10-06，在 dmit.nrt 上和线上同一个镜像、同一个网络里临时起了一个带自己密钥的中继（线上那个只认站长的登录），本机 Chrome 经 SSH 转发连上，验完即删：
 
 | | |
 |---|---|
-| 第一次 `net on`（输入口令、派生密钥、握手、配网卡） | 3.8 秒 |
-| 再次 `net on` | 0.7 秒 |
-| `ping -c 3 1.1.1.1` | 3/3，平均 38 ms |
-| `curl https://github.com/` | 200；DNS 0.05 s，TLS 0.61 s |
-| 下载 5 MB | 2.0 MB/s（瓶颈是模拟的 CPU；中继本身 release 构建 150 MiB/s） |
-| 访问 10.0.0.1 | 40 ms 内被拦下（ICMP） |
-| 口令错误 | 「中继不认这个口令：net login 重新输入。」 |
+| `net on` | 2.3 秒，含问 Cloudflare 出口在哪；第一行就列出 IPv4、IPv6 两个地址 |
+| `ping -6 2606:4700:4700::1111` | 平均 76 ms（本机在香港，中继在东京） |
+| `curl -6` | 出口是那台机器自己的 IPv6 地址，Cloudflare 的机房是 NRT；`ipv6.google.com` 200；两个族都有的 `www.google.com` 走 IPv4（RFC 6724） |
+| `mtr -6` | 七跳都在：网关 `fdca:c697:4c23::2`、Docker 网桥 `fdd1:31fb:31e3::1`、DMIT 的两台路由器、JPIX、Cloudflare、目的地 |
+| 访问 `fd00::1` | 1.6 秒内被拦下 |
+
+2026-10-05 在香港量的，握手之后的部分至今没变：`ping 1.1.1.1` 平均 38 ms；`curl https://github.com/` 200，DNS 0.05 s，TLS 0.61 s；客户机里下载 2.0 MB/s，瓶颈是模拟的 CPU（中继本身 release 构建 150 MiB/s）；访问 10.0.0.1，40 ms 内被拦下。
 
 ## 测试
 
 - `cargo test --manifest-path relay/Cargo.toml`（CI 在跑）：
   - 单元测试：两个族的报文构造（校验和、各族自己的 ICMP 类型和代码、IPv6 错误报文引用到 1280 字节为止、路由通告）、加密通道（错误密钥、重放、乱序）、配置、策略；
   - 端到端（20 项）：smoltcp 扮演一台有以太网、ARP 和邻居发现的访客，像 Linux 一样从网关的通告生成 IPv6 地址，经真实的 WebSocket 和加密通道连进进程内的中继，再经别名访问本机的测试服务（192.0.2.10 → 127.0.0.1，2001:db8::10 → ::1）。两个族各测一遍：TCP 双向和半关闭、被拒（SYN-SENT 时就收到 RST）和被策略拦下（ICMP）、UDP、UDP 端口不可达、ping 网关、最后一跳在网关；另有生成的地址、DNS 的 A 和 AAAA、错误密钥被拒、登录、经 SOCKS5 出口（连通和被拒）、限速、额度、闲置；
-  - Linux 上两个族各多一项 `ping_goes_out`：经 ping socket 真的发出去；另有一项需要外网、默认跳过的 `the_next_hop_is_out_there`（`--ignored`）：TTL 2 到 4 的 ping 从真实路由器收到「超时」。在 v2in0 的容器里全部通过（第 2 跳是 Docker 网桥，第 3 跳是上游路由器）。
+  - Linux 上两个族各多一项 `ping_goes_out`：经 ping socket 真的发出去；另有一项需要外网、默认跳过的 `the_next_hop_is_out_there`（`--ignored`）：TTL 2 到 4 的 ping 从真实路由器收到「超时」。在 Linux 的容器里全部通过，CI 上也跑（要连外网的那项除外；它跑的时候，第 2 跳是 Docker 网桥，第 3 跳是上游路由器）。
 - `npm run check:login` 里，真的客户机联网后拿到 IPv6 地址、ping 得通网关，再经中继的别名用 IPv6 连到本机的 press。
 
 ## 本地开发
@@ -131,7 +133,7 @@ cargo run -- relay.toml                 # 监听 127.0.0.1:8095；Windows 上没
 npm run dev                             # /relay 代理到 127.0.0.1:8095（RELAY=host:port 可改）
 ```
 
-要测 ping，就把中继跑在 Linux 上（比如 v2in0 的容器里），再用 SSH 转发；容器里用的 relay.toml 要加一行 `listen = "0.0.0.0:8095"`，默认的 127.0.0.1 在容器里，外面连不进来：
+要测 ping，就把中继跑在一台 Linux 的容器里，再用 SSH 转发；容器里用的 relay.toml 要加一行 `listen = "0.0.0.0:8095"`，默认的 127.0.0.1 在容器里，外面连不进来：
 
 ```sh
 docker build -t homepage-relay relay/   # 在那台机器上
@@ -142,43 +144,4 @@ RELAY=127.0.0.1:18095 npm run dev
 
 ## 部署
 
-本站在 dmit.nrt 上（2026-10-06 从香港的 .100、.101 搬来），前面是 Cloudflare 的代理：
-
-```
-访客 ──https://arc.moe──▶ Cloudflare ──▶ dmit.nrt：Caddy（homepage-caddy，80、443）──▶ nginx（homepage-demo）
-                                                                    │ Docker 网络 homepage，双栈
-                                                                    ▼
-                                                      homepage-relay:8095（不发布端口）──▶ 互联网，IPv4 和 IPv6
-```
-
-- **中继**：容器 `homepage-relay`，镜像 `ghcr.io/nettomew/pien-relay:<提交>`（CI 构建，见下），以 65534（nobody）运行，`--restart unless-stopped`，只接在 Docker 网络 `homepage` 上。配置在 `/srv/homepage-relay/relay.toml`（属主 65534，权限 600），只有会话密钥（和 press 的相同）；格式见 `deploy/relay.toml.example`：最多 4 个会话，闲置 2 小时断开，不限速、不限量，出口直连。
-- **网络**：`homepage` 是双栈的，IPv4 `172.18.0.0/16`，IPv6 是另一段唯一本地前缀 `fdd1:31fb:31e3::/64`（和访客的那段无关：访客的网段只在中继的进程里）。两个族出门都由宿主机做 NAT。IPv6 的那份要 Docker 自己写 ip6tables 规则，Debian 12 的 Docker 20.10 里这还算实验功能，所以 `/etc/docker/daemon.json` 是 `{"experimental": true, "ip6tables": true}`。Docker 因此打开了宿主机的 IPv6 转发；eth0 的 `accept_ra` 本来就是 2，这台机器照样从路由通告拿自己的地址和默认路由。
-- **nginx**：`deploy/nginx.conf` 两个族都听：容器名在双栈网络上解析出两个地址，Caddy 先拨 IPv6 的那个。`location = /relay` 按请求经 Docker 的 DNS 找中继，只问 A 记录（`ipv6=off`），中继不在时 nginx 也能启动；这一段不写访问日志。
-- **Caddy**：`/srv/caddy/Caddyfile` 只有 `arc.moe { reverse_proxy homepage-demo:80 }`，整个站点连同 WebSocket 都转给 nginx，中继不用单独配置。证书走 HTTP-01，Cloudflare 的代理会放行；Cloudflare 的 SSL 模式是 Full 以上。
-
-**发布**：推到 `main`、CI 全部通过之后，`.github/workflows/build.yml` 把三个镜像推到 GitHub 的容器仓库，各自打上提交的七位前缀和 `main`：`ghcr.io/nettomew/pien-relay`、`ghcr.io/nettomew/pien-press`，和只装着站点（`dist/`）的 `ghcr.io/nettomew/pien-site`。服务器上一行：
-
-```sh
-pien-deploy <提交>            # 或者 main：main 最后发布的那一版
-pien-deploy <提交> --check    # 只拉下来、解开看一眼，正在跑的一样不动
-```
-
-`deploy/pien-deploy`（装在 dmit.nrt 的 `/usr/local/bin/`）拉下三个镜像。中继和 press 只在镜像变了时才重建容器：中继一重启，访客的网络就断了。站点解到旁边再换上去，旧的留成 `site.bak-<时间>`（只留最近三份），然后重启 nginx 和 press。容器的名字、挂载和环境变量都和以前一样，写在脚本里。
-
-站点镜像分两层：机器的文件块（按内容命名，73.6 MB，系统没变它就不变），和其余的一切（10.6 MB）。CI 把所有文件的日期都定在 1970，没变的那层就是同一层，不再推，也不再拉。CI 里其余的缓存写在 `build.yml` 开头：npm、中继的依赖、机器（`public/vm/`，按它的全部来源和周数）、内核和工具、两个镜像的构建层。
-
-**网络改成双栈**（2026-10-06，做过一次）：写好 `daemon.json`，停掉四个容器，`systemctl restart docker`，把它们从 `homepage` 上摘下来，删掉网络再建，再接回去、启动：
-
-```sh
-docker network create --ipv6 \
-  --subnet 172.18.0.0/16 --gateway 172.18.0.1 \
-  --subnet fdd1:31fb:31e3::/64 --gateway fdd1:31fb:31e3::1 homepage
-```
-
-站点停了 13 秒。当时 nginx 还只听 IPv4，Caddy 先拨 IPv6 拨不通，又报了一分半钟 502，加上 `listen [::]:80`、重载之后恢复。
-
-**换会话密钥**：见 [login.md](login.md#部署)，press 和中继要一起换，所有登录随之作废。
-
-**回滚**：`pien-deploy <上一个提交>`；站点也可以直接把 `site.bak-*` 挪回来，再重启 nginx。改由 CI 发布之前的最后一版是本地镜像 `homepage-relay:c0df391` 和 `homepage-press:9d7754f`，还留在机器上。IPv6：删掉 `daemon.json`，照上面的步骤重启 Docker，把网络建回只有 IPv4 的。站点：`/srv/homepage-demo/` 下有带时间戳的 `site.bak-*` 和 `nginx.conf.bak-*`。香港的旧部署停着没删，必要时整个切回去。
-
-**上线后实测**（2026-10-06；线上的中继只认站长的登录，所以在同一台机器、同一个网络上用同一个镜像临时起了一个带密钥的中继，本机 Chrome 经 SSH 转发连上，验完即删）：`net on` 2.3 秒，第一行就列出两个地址；`ping -6 2606:4700:4700::1111` 平均 76 ms；`curl -6` 的出口是这台机器自己的 IPv6 地址，Cloudflare 的机房是 NRT；`ipv6.google.com` 200，`www.google.com` 走 IPv4（RFC 6724，见上）；`mtr -6` 七跳都在：网关 `fdca:c697:4c23::2`、Docker 网桥 `fdd1:31fb:31e3::1`、DMIT 的两台路由器、JPIX、Cloudflare、目的地；`fd00::1` 1.6 秒内被拦下。
+用 Docker、不用 Docker、本站现在的样子，都在 [deploy.md](deploy.md)。中继在其中只是一个静态程序：配置见 `deploy/relay.toml.example`，不用 Docker 时的 systemd 服务见 `deploy/systemd/pien-relay.service`。

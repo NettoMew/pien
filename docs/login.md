@@ -100,16 +100,6 @@ ESC ] 7337 ; ask ; <暗号> ; <id> ; <话题> ; <词> … BEL
 
 ## 部署
 
-```
-/srv/homepage-press/
-  press.env            deploy/press.env.example
-  data/                属主 1000：account.json，以及写作的草稿和未发布的图片
-  content/             属主 1000：内容仓库（git），见 writing.md
-  public/              属主 1000：press 渲染出的网页和 /content/
-  secrets/session.key  属主 1000，600：会话密钥，和中继 relay.toml 的 session_key 相同
-  secrets/github.secret 属主 1000，600：GitHub OAuth 的 client secret
-```
+press 的目录、两个密钥文件、`press.env`，用 Docker 和不用 Docker 怎么部署，见 [deploy.md](deploy.md)。GitHub OAuth App 的回调地址是 `https://<域名>/api/auth/github/callback`。第一个通行密钥要的一次性码：用 Docker 是 `docker exec homepage-press press enroll`，不用 Docker 见 deploy.md。
 
-容器 `homepage-press` 由 `deploy/pien-deploy` 用 CI 发布的镜像 `ghcr.io/nettomew/pien-press:<提交>` 建起来，上面这些怎么挂进去、`press.env` 怎么给，都写在脚本里（见 [relay.md](relay.md#部署)）。nginx 把 `/api/` 转给它（`deploy/nginx.conf`）。GitHub OAuth App 的回调地址是 `https://arc.moe/api/auth/github/callback`。
-
-**换会话密钥**（所有登录作废）：新密钥同时写进 `secrets/session.key` 和中继的 `relay.toml`，两个容器都重启。**换 GitHub 密钥**：写进 `secrets/github.secret`，重启 press。
+**换会话密钥**（所有登录作废）：新密钥同时写进 press 的 `session.key` 和中继的 `relay.toml`，两边都重启。**换 GitHub 密钥**：写进 `github.secret`，重启 press。

@@ -1,6 +1,6 @@
 # 联网方案（wisp，未采用）
 
-> **已被取代。** 这份 wisp 方案从没实现。联网用的是 Rust 写的以太网中继（`relay/`，`net on`），见 [relay.md](relay.md)；站点在 dmit.nrt 上的 https://arc.moe。WARP 直通 2026-10-05 封存（[warp.md](warp.md)）。下文的 .100、.101、test-demo.arc.moe、TypeScript 加 wisp-js 的中继、静态地址和代替 `ping` 的脚本，都只是当时的设想，留作记录。
+> **已被取代。** 这份 wisp 方案从没实现。联网用的是 Rust 写的以太网中继（`relay/`，`net on`），见 [relay.md](relay.md)；站点是东京一台服务器上的 https://arc.moe（[deploy.md](deploy.md#本站)）。WARP 直通 2026-10-05 封存（[warp.md](warp.md)）。下文的 .100、.101、test-demo.arc.moe、TypeScript 加 wisp-js 的中继、静态地址和代替 `ping` 的脚本，都只是当时的设想，留作记录。
 
 目标：访客在终端里能 `curl https://…`、`git clone`。这台机器仍然只存在于访客的浏览器里，我们的服务器也不能因此变成一个开放代理。
 
@@ -32,7 +32,7 @@ v86 自带四种网络后端（源码 `src/browser/*_network.js`）：
 1. **目的地只放行 TCP 80/443**，UDP 全关。wisp-js 的配置是 `port_whitelist: [80, 443]` 和 `allow_udp_streams: false`。
 2. **禁止访问内网**：私网、回环、链路本地、组播、CGNAT 地址，以及我们自己的公网 IP 都不让连。这要做两层：
    - wisp-js 里的 `allow_private_ips: false` 和 `allow_loopback_ips: false`；
-   - 中继容器所在的 Docker 网络上，用 iptables（DOCKER-USER 链）丢弃发往 172.27.0.0/16、172.16.0.0/12、10.0.0.0/8、192.168.0.0/16 的流量。即使应用层被绕过，或者遇到 DNS 重绑定，也碰不到 vaultwarden、gitea 这些内网服务。
+   - 中继容器所在的 Docker 网络上，用 iptables（DOCKER-USER 链）丢弃发往 172.27.0.0/16、172.16.0.0/12、10.0.0.0/8、192.168.0.0/16 的流量。即使应用层被绕过，或者遇到 DNS 重绑定，也碰不到同一台机器上的其他内网服务。
 3. **只接受自己站点的 WebSocket**：Origin 必须是 `https://test-demo.arc.moe`，挡住别的网站拿我们的中继当后端。
 4. **配额**：
    - 每个 IP 最多 2 条连接，每条连接最多 16 个流；

@@ -70,11 +70,4 @@ press 用和构建时同一套模板（`scripts/lib/blog.ts`）渲染文章页�
 
 ## 部署
 
-```
-/srv/homepage-press/
-  content/   内容仓库（git），属主 1000；第一次从仓库的 content/ 复制过来，press 启动时自己 git init
-  public/    press 渲染的东西，属主 1000；nginx 只读挂在 /srv/press
-  data/      账号、草稿、未发布的图片
-```
-
-press 容器多挂三处：`content → /content`、`public → /public`，以及站点所在的目录 `/srv/homepage-demo → /deploy`（只读；挂上一级，因为每次部署都会换掉 `site`），`deploy/pien-deploy` 照此建它。环境变量见 `deploy/press.env.example`。nginx 容器多挂 `/srv/homepage-press/public → /srv/press`（只读）。
+press 写作用的三个目录：`content/`（内容仓库，git；第一次从仓库的 `content/` 复制过来，press 启动时自己 `git init`）、`public/`（它渲染出的网页和 `/content/`，nginx 只读地挂着）、`data/`（草稿和未发布的图片）。它还要读部署着的站点，找网页用的样式表；用 Docker 时挂的是站点的上一级目录，因为每次部署都会换掉 `site`。怎么摆、怎么挂，见 [deploy.md](deploy.md)。

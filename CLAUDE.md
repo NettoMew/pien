@@ -49,8 +49,8 @@ npm run dev            # http://localhost:5173
 
 ## 部署
 
-- 推到 `main`、CI 全部通过之后，`.github/workflows/build.yml` 把 `ghcr.io/nettomew/pien-relay`、`-press`、`-site` 推到 GitHub 的容器仓库，打上提交的七位前缀和 `main`。服务器上由站长手动跑 `pien-deploy <提交>`（`deploy/pien-deploy`，`--check` 只拉下来看一眼）。细节见 [docs/relay.md](docs/relay.md#部署)。
-- 服务器上的容器叫 `homepage-relay`、`homepage-press`、`homepage-demo`（nginx）、`homepage-caddy`，接在双栈的 Docker 网络 `homepage` 上：容器名解析出两个地址，容器里的服务两个族都要听（Caddy 先拨 IPv6）。那台机器上还跑着站长别的服务，只动这几个容器。
+- 推到 `main`、CI 全部通过之后，`.github/workflows/build.yml` 把 `ghcr.io/nettomew/pien-relay`、`-press`、`-site` 推到 GitHub 的容器仓库，打上提交的七位前缀和 `main`。服务器上由站长手动跑 `pien-deploy <提交>`（`deploy/pien-deploy`，`--check` 只拉下来看一眼）。从零怎么部署（用 Docker 或不用）、本站现在的样子，见 [docs/deploy.md](docs/deploy.md)。
+- 服务器上的容器叫 `homepage-relay`、`homepage-press`、`homepage-demo`（nginx）、`homepage-caddy`，接在双栈的 Docker 网络 `homepage` 上：容器名解析出两个地址：Caddy 先拨 IPv6，所以 nginx 两个族都要听；nginx 找中继和 press 只问 IPv4。那台机器上还跑着站长别的服务，只动这几个容器。
 - 被绑定挂载着的目录不能 `rm -rf` 了再重建：跑着的容器还拿着删掉的那个。站点换上去以后要重启 nginx 和 press。
 - 线上的中继只认站长的登录。要用真的客户机试它，就在同一台机器、同一个网络上用同一个镜像临时起一个带自己密钥的中继，只发布到 127.0.0.1，经 ssh 转发过来，在 `vite preview` 里 `net relay ws://127.0.0.1:<端口>/`，用完删掉。
 

@@ -2,17 +2,17 @@
 
 > **已封存（2026-10-05）。** `warp/`、`src/warp/` 和这篇文档都原样留着，但页面不再加载 WARP 客户端，构建和 CI 不再编译它，客户机里也没有 `net warp` 和 `net forget`。线上本来就没有部署它需要的 `/warp/` 路由。
 >
-> 解封：把封存前的入口找回来（`git show 50c10d8` 下的 `image/rootfs/etc/fish/functions/net.fish`、`image/rootfs/usr/libexec/home/hostd`、`src/net/index.ts`、`src/session.ts`、`vite.config.ts`），只把 WARP 那几段合进现在的文件，不要整份盖回去：封存之后它们又多了 `net login`、`net relay` 和 IPv6。CI 加回 `build:warp` 和 `cargo test --manifest-path warp/Cargo.toml`，再部署 `/warp/edge` 和 `/warp/api/`。下文写的部署是在香港的 .100、.101 上，站点如今在 dmit.nrt；`deploy/compose.yaml` 从没进过仓库，照 [relay.md](relay.md#部署) 的部署一节改写。
+> 解封：把封存前的入口找回来（`git show 50c10d8` 下的 `image/rootfs/etc/fish/functions/net.fish`、`image/rootfs/usr/libexec/home/hostd`、`src/net/index.ts`、`src/session.ts`、`vite.config.ts`），只把 WARP 那几段合进现在的文件，不要整份盖回去：封存之后，`net login` 从口令改成了通行密钥和 GitHub，又多了 `net relay`、`net passkey`、`net github` 和 IPv6。CI 加回 `build:warp` 和 `cargo test --manifest-path warp/Cargo.toml`，再部署 `/warp/edge` 和 `/warp/api/`。下文写的部署是在香港的 .100、.101 上，站点如今在东京的一台服务器上（[deploy.md](deploy.md#本站)）；`deploy/compose.yaml` 从没进过仓库，照 [deploy.md](deploy.md) 改写。
 
 访客在终端里敲 `net warp`，这台虚拟机就作为一台真正的主机接入互联网，出口是 Cloudflare WARP。`curl`、`git`、真实的 `ping` 和 UDP DNS 都能用。不用我们的出口 IP，也没有开放代理。
 
 和 [network.md](network.md) 里的自建 wisp 中继相比（那个方案没有采用，现在用的是 [relay.md](relay.md) 的以太网中继），服务器上只剩一根「哑管道」：只能连 WARP 的一个入口，只看得到 TLS 密文。
 
-**封存时的状态（2026-10-04）**：原型已在本机跑通（W1–W4），线上没有部署（W6）。
+**封存时的状态（2026-10-05）**：原型已在本机跑通（W1–W4），线上没有部署（W6）。
 
 ## 原型实测
 
-在 Chrome 里打开 `vite preview` 的生产构建，访客侧的边缘入口经 v2in0（香港）转发：
+在 Chrome 里打开 `vite preview` 的生产构建，访客侧的边缘入口经香港的一台机器转发：
 
 | | |
 |---|---|
@@ -151,9 +151,9 @@ net warp 用一个非官方客户端，
 
 **注册为什么不走第二根 websockify 管道**：那样 wasm 里得自己做一套带 CA 根证书的 TLS，体积要多约 150 KB。改用固定上游、只放行固定路径的 HTTPS 反向代理，安全性质不变，wasm 也保持很小。代价是注册请求（包括 token）会经过我们的服务器。
 
-**线上部署**（待确认）全部写在仓库里：
+**线上部署**（只是设想，从没写进仓库）要加的：
 - `deploy/compose.yaml`：现有的 nginx 加一个 websockify 服务；
-- `deploy/nginx.conf`：新增 `/warp/edge` 和 `/warp/api/` 两段：
+- `deploy/nginx.conf`：加 `/warp/edge` 和 `/warp/api/` 两段：
   - 校验 `Origin`；
   - 用 `real_ip` 取出 Caddy 转来的访客 IP；
   - 用 `limit_conn` 限制每个 IP 最多 2 条隧道，用 `limit_req` 限制注册每分钟 5 次。
@@ -176,7 +176,7 @@ npm run warp -- delete                      # 用完删掉
 如果本机连不上入口，就借一台连得上的机器开 SSH 转发，再让开发服务器走这条转发：
 
 ```sh
-ssh -N -L 127.0.0.1:18443:162.159.198.2:443 v2in0
+ssh -N -L 127.0.0.1:18443:162.159.198.2:443 <一台连得上入口的机器>
 WARP_EDGE=127.0.0.1:18443 npm run dev
 ```
 

@@ -4,7 +4,7 @@
 
 ## 先做
 
-1. **部署要不要自动**：CI 已经构建并发布镜像（`ghcr.io/nettomew/pien-*`），服务器上还是手动敲一行 `pien-deploy <提交>`。要做到推上去就上线，得把一把能登录 dmit.nrt 的 SSH 密钥放进仓库的 secrets，眼下选择不放。
+1. **部署要不要自动**：CI 已经构建并发布镜像（`ghcr.io/nettomew/pien-*`），服务器上还是手动敲一行 `pien-deploy <提交>`。要做到推上去就上线，得把一把能登录服务器的 SSH 密钥放进仓库的 secrets，眼下选择不放。
 2. **替换占位内容**：`content/about.md` 里的简介、GitHub、邮箱还是方括号里的占位；两篇示例文章（`markdown.md` 只是排版测试）。改种子要重建镜像，服务器上的内容仓库也要一起改。
 
 ## 接真设备试一遍
@@ -34,9 +34,3 @@
 14. ⌘K 命令面板；动态实时推送（`tail -f moments`）；aarch64 彩蛋模式；浅色主题。
 15. **保存 fish 历史**：现在一刷新就没了，目前当作「刷新即复原」的设计，要不要保存再定。
 16. **edl 的 loader**：各家手机的 firehose 程序在另一个仓库，几百 MB，不随镜像，现在要访客自己拖进来。可以像 mtkclient 的 loader 那样按需读，放在站点上。
-
-## 运维
-
-17. **.100 的 Caddyfile 里有明文 Cloudflare token**：建议轮换，并改成通过环境变量注入。
-18. **收掉香港的旧部署**：站点 2026-10-06 搬到了 dmit.nrt。.101 上停着的三个容器和 `/srv/homepage-*`、.100 上 arc.moe 那段 Caddy 配置都还留着，备回滚；确认不用了就删。`www.arc.moe`、`test-demo.arc.moe` 仍指向 .100，只做跳转，可以改成在 Cloudflare 上跳转，.100 就不必再管。
-19. **v2in0 的 SSH 正被爆破**：sshd 因 MaxStartups 频繁丢连接。建议只允许密钥登录、加 fail2ban，或者限制 22 端口的来源。
